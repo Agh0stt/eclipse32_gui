@@ -7,18 +7,26 @@
 #include "../drivers/keyboard/keyboard.h"
 #include "../drivers/mouse/mouse.h"
 #include "../arch/x86/pit.h"
+#include "../syscall/syscall.h"
+#include "../sched/sched.h"
 #include "gui_compat.h"
 
 // ============================================================
 // Compatibility shims — bridge old GUI to new driver APIs
 // ============================================================
 
-// kb_getchar_nowait: return 0 if no key, else ASCII char
+// kb_getchar_nowait: return 0 if no printable key press, else ASCII char.
+// Drains and discards all release events and non-ASCII press events so they
+// don't clog the queue and starve subsequent calls.
 static char kb_getchar_nowait(void) {
-    if (!keyboard_has_event()) return 0;
-    key_event_t e = keyboard_get_event();
-    if (e.released) return 0;
-    return e.ascii;
+    while (keyboard_has_event()) {
+        key_event_t e = keyboard_get_event();
+        if (e.released) continue;          // discard key-up events
+        if (e.keycode != KEY_ASCII) continue; // discard non-printable (arrows etc)
+        if (e.ascii == 0) continue;        // safety: ignore null chars
+        return e.ascii;
+    }
+    return 0;
 }
 
 Framebuffer g_fb = {0};
@@ -1833,23 +1841,63 @@ static void render_piano(Window *w, int32_t mx, int32_t my, uint8_t click){
 }
 
 // --- Terminal ---
+// Command buffer: copied before launching app task (avoids stack lifetime issues)
+static char g_term_cmd_buf[256];
+
+// Forward declaration (defined below)
+static void term_out_cb(const char *c, void *ud);
+
+// App task runner — executed in TASK_APP context by the scheduler
+static void term_app_runner(void *ud) {
+    Window *w = (Window *)ud;
+    shell_exec_line(g_term_cmd_buf, term_out_cb, (void*)w);
+    // sched_app_done() is called by the scheduler trampoline after we return
+}
+
 // Terminal output redirect: appends chars into the window text buffer
 static void term_out_cb(const char *c, void *ud){
     Window *w=(Window*)ud;
-    // If buffer almost full, trim oldest half (keep last 4KB)
-    if(w->st.text_len >= WIN_TEXT_BUF-4){
-        int32_t keep = WIN_TEXT_BUF/2;
-        // Find a newline near the midpoint to cut cleanly
-        int32_t cut = w->st.text_len - keep;
-        while(cut < w->st.text_len && w->st.text[cut] != '\n') cut++;
-        if(cut < w->st.text_len) cut++;
-        int32_t newlen = w->st.text_len - cut;
-        if(newlen > 0) kmemcpy(w->st.text, w->st.text+cut, (uint32_t)newlen);
-        w->st.text_len = newlen;
+    while (*c) {
+        char ch = *c++;
+        if (ch == '\b') {
+            // Backspace: remove last character from buffer
+            if (w->st.text_len > 0) {
+                w->st.text_len--;
+                w->st.text[w->st.text_len] = 0;
+            }
+            continue;
+        }
+        // If buffer almost full, trim oldest half (keep last 4KB)
+        if(w->st.text_len >= WIN_TEXT_BUF-4){
+            int32_t keep = WIN_TEXT_BUF/2;
+            int32_t cut = w->st.text_len - keep;
+            while(cut < w->st.text_len && w->st.text[cut] != '\n') cut++;
+            if(cut < w->st.text_len) cut++;
+            int32_t newlen = w->st.text_len - cut;
+            if(newlen > 0) kmemcpy(w->st.text, w->st.text+cut, (uint32_t)newlen);
+            w->st.text_len = newlen;
+            w->st.text[w->st.text_len] = 0;
+        }
+        w->st.text[w->st.text_len++] = ch;
         w->st.text[w->st.text_len] = 0;
     }
-    w->st.text[w->st.text_len++]=c[0];
-    w->st.text[w->st.text_len]=0;
+}
+
+// Terminal input redirect: pop one char from the window's ring buffer (non-blocking)
+static int term_in_cb(void *ud) {
+    Window *w = (Window *)ud;
+    if (w->st.term_in_head == w->st.term_in_tail) return 0; // empty
+    char c = w->st.term_inbuf[w->st.term_in_tail];
+    w->st.term_in_tail = (w->st.term_in_tail + 1) % (uint32_t)sizeof(w->st.term_inbuf);
+    return (int)(unsigned char)c;
+}
+
+// Push one char into the ring buffer (called from keyboard handler)
+static void term_inbuf_push(Window *w, char c) {
+    uint8_t next = (w->st.term_in_head + 1) % (uint32_t)sizeof(w->st.term_inbuf);
+    if (next == w->st.term_in_tail) return; // buffer full, drop
+    w->st.term_inbuf[w->st.term_in_head] = c;
+    w->st.term_in_head = next;
 }
 
 // Extract the command typed after the last '> ' prompt
@@ -1906,35 +1954,58 @@ static void render_terminal(Window *w, int32_t mx, int32_t my, uint8_t click, ui
 
     // Keyboard input: only read keys when this terminal window is active/front
     if(!active) return;
+
+    // If an app is running, feed keys into its stdin ring buffer
+    if(w->st.term_app_running){
+        char kc=kb_getchar_nowait();
+        if(kc) term_inbuf_push(w, kc);
+        return;
+    }
+
     char kc=kb_getchar_nowait();
     if(kc){
         if(kc=='\r'||kc=='\n'){
-            // Extract typed command
             char cmd[256];
             term_get_cmd(w, cmd, 256);
-            // Echo newline
             if(w->st.text_len<WIN_TEXT_BUF-2){
                 w->st.text[w->st.text_len++]='\n';
                 w->st.text[w->st.text_len]=0;
             }
-            // Handle clear specially
             if(kstrcmp(cmd,"clear")==0||kstrcmp(cmd,"cls")==0){
                 kstrcpy(w->st.text,"");
                 w->st.text_len=0;
             } else if(cmd[0]!=0){
-                // Run command through real shell engine
-                shell_exec_line(cmd, term_out_cb, (void*)w);
+                // Set up I/O callbacks for the app task
+                w->st.term_app_running = 1;
+                w->st.term_in_head = w->st.term_in_tail = 0;
+                syscall_set_output_cb(term_out_cb, (void*)w);
+                syscall_set_input_cb(term_in_cb, (void*)w);
+                kstrcpy(g_term_cmd_buf, cmd);
+
+                // Launch app in TASK_APP.  sched_run_app does the first switch.
+                // The app may yield back here many times while waiting for
+                // keyboard input (sys_read → sched_yield).  Each time it
+                // yields we pump one GUI frame so the desktop stays alive and
+                // keypresses get pushed into the ring buffer.  We loop until
+                // the app calls sched_app_done() (runnable → false).
+                sched_run_app(term_app_runner, (void*)w);
+                while (sched_app_running()) {
+                    gui_pump();          // render frame + collect keypresses
+                    sched_yield();       // give app another turn
+                }
+
+                // App finished — tear down callbacks
+                syscall_set_output_cb(NULL, NULL);
+                syscall_set_input_cb(NULL, NULL);
+                w->st.term_app_running = 0;
             }
-            // Append prompt
             if(w->st.text_len<WIN_TEXT_BUF-4){
                 w->st.text[w->st.text_len++]='>';
                 w->st.text[w->st.text_len++]=' ';
                 w->st.text[w->st.text_len]=0;
             }
         }else if(kc=='\b'||kc==127){
-            // Backspace: only delete if not at prompt marker
             if(w->st.text_len>=3){
-                // Check we're not erasing the "> "
                 char prev=w->st.text[w->st.text_len-1];
                 char prev2=w->st.text[w->st.text_len-2];
                 if(!(prev==' '&&prev2=='>')){
@@ -1943,7 +2014,6 @@ static void render_terminal(Window *w, int32_t mx, int32_t my, uint8_t click, ui
                 }
             }
         }else if(kc==3){
-            // Ctrl+C: cancel line
             if(w->st.text_len<WIN_TEXT_BUF-6){
                 const char *ctc="^C\n> ";
                 kstrcpy(w->st.text+w->st.text_len,ctc);
@@ -2308,6 +2378,22 @@ void gui_run(void) {
     open_window(APP_TERMINAL);
 
     for (;;) {
+        gui_pump();
+    }
+}
+
+// ============================================================
+// gui_pump — run one GUI frame; callable from sys_read while
+// an app is blocking on stdin so the desktop stays responsive.
+// ============================================================
+void gui_pump(void) {
+    static uint8_t prev_btn  = 0;
+    static uint8_t dragging  = 0;
+    static int32_t drag_idx  = -1;
+    static int32_t drag_ox   = 0;
+    static int32_t drag_oy   = 0;
+    // gui_pump runs in TASK_GUI only — no re-entrancy issues with the scheduler.
+
         int32_t mx = g_mouse.x;
         int32_t my = g_mouse.y;
         uint8_t btn  = g_mouse.buttons & 0x01;
@@ -2416,5 +2502,4 @@ void gui_run(void) {
 
         // ~30fps (32ms). Faster hurts older hardware, slower feels laggy.
         sleep_ms(32);
-    }
 }

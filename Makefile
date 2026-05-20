@@ -82,6 +82,7 @@ KERNEL_SRCS := \
     $(SHELL_DIR)/ins_pkg.c \
     $(KERNEL_DIR)/drivers/mouse/mouse.c \
     $(KERNEL_DIR)/gui/gui_desktop.c \
+    $(KERNEL_DIR)/sched/sched.c \
     $(KERNEL_DIR)/libk/kmath.c
 
 # --- Kernel ASM sources ---

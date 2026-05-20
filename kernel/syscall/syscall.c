@@ -6,6 +6,7 @@
 #include "../drivers/vga/vga.h"
 #include "../fs/fat32/fat32.h"
 #include "../initramfs/initramfs.h"
+#include "../sched/sched.h"
 
 typedef int32_t (*syscall_fn_t)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
 
@@ -25,6 +26,12 @@ static fat32_dir_entry_t readdir_scratch[READDIR_SCRATCH_MAX];
    route through this callback instead of going directly to vga_putchar. */
 static void (*g_out_cb)(const char *, void *) = NULL;
 static void *g_out_ud = NULL;
+
+/* Input redirect: when an E32 runs inside the GUI terminal, stdin reads
+   use this non-blocking callback instead of keyboard_wait_event().
+   Returns 0 if no char is available yet (caller should yield). */
+static int (*g_in_cb)(void *) = NULL;
+static void *g_in_ud = NULL;
 
 static bool ptr_ok(const void *ptr) {
     uint32_t p = (uint32_t)ptr;
@@ -66,42 +73,68 @@ static int32_t sys_read_impl(uint32_t fd, uint32_t buf_ptr, uint32_t len, uint32
     char *buf = (char *)translate_app_ptr(buf_ptr, len);
     if (!ptr_ok(buf)) return -1;
     if (fd == 0) {
-        /* Use a local kernel buffer — avoids any translate_app_ptr issues.
-         * keyboard_wait_event() is the same path the shell uses, proven to work. */
         char kbuf[512];
         uint32_t max = (len < sizeof(kbuf)) ? len : (uint32_t)sizeof(kbuf);
         uint32_t n = 0;
 
-        while (n < max) {
-            key_event_t ev = keyboard_wait_event();
-            if (ev.released) continue;
-            if (ev.keycode != KEY_ASCII) continue;
-
-            char c = ev.ascii;
-
-            if (c == '\n' || c == '\r') {
-                vga_putchar('\n');
-                kbuf[n++] = '\n';
-                break;
-            }
-
-            if (c == '\b' || c == 127) {
-                if (n > 0) {
-                    n--;
-                    vga_putchar('\b');
-                    vga_putchar(' ');
-                    vga_putchar('\b');
+        if (g_in_cb) {
+            /* Scheduler mode: yield to GUI task while waiting for keyboard.
+               The GUI task runs gui_pump() which feeds keys into the ring
+               buffer via term_inbuf_push(). g_in_cb drains them here.     */
+            while (n < max) {
+                int c = g_in_cb(g_in_ud);
+                if (c <= 0) {
+                    if (n > 0 && kbuf[n-1] == '\n') break;
+                    sched_yield();  /* give GUI a frame to collect keypresses */
+                    continue;
                 }
-                continue;
-            }
+                char ch = (char)c;
+                if (ch == '\r') ch = '\n';
 
-            if (c >= 32) {
-                kbuf[n++] = c;
-                vga_putchar(c);
+                /* Backspace: remove last char from local buffer */
+                if (ch == '\b' || ch == 127) {
+                    if (n > 0) {
+                        n--;
+                        if (g_out_cb) {
+                            g_out_cb("\b", g_out_ud);
+                            g_out_cb(" ", g_out_ud);
+                            g_out_cb("\b", g_out_ud);
+                        }
+                    }
+                    continue;
+                }
+
+                kbuf[n++] = ch;
+                /* Echo the character so user sees what they typed */
+                if (g_out_cb) {
+                    char echo[2] = { ch, 0 };
+                    g_out_cb(echo, g_out_ud);
+                } else {
+                    vga_putchar(ch);
+                }
+                if (ch == '\n') break;
+            }
+        } else {
+            /* VGA text-mode: blocking wait as before */
+            while (n < max) {
+                key_event_t ev = keyboard_wait_event();
+                if (ev.released) continue;
+                if (ev.keycode != KEY_ASCII) continue;
+
+                char c = ev.ascii;
+                if (c == '\n' || c == '\r') {
+                    vga_putchar('\n');
+                    kbuf[n++] = '\n';
+                    break;
+                }
+                if (c == '\b' || c == 127) {
+                    if (n > 0) { n--; vga_putchar('\b'); vga_putchar(' '); vga_putchar('\b'); }
+                    continue;
+                }
+                if (c >= 32) { kbuf[n++] = c; vga_putchar(c); }
             }
         }
 
-        /* Copy result into the app's buffer directly via the translated pointer */
         for (uint32_t i = 0; i < n; i++) buf[i] = kbuf[i];
         return (int32_t)n;
     }
@@ -354,4 +387,28 @@ void syscall_set_app_heap(uint32_t brk_base, uint32_t brk_limit) {
 void syscall_set_output_cb(void (*cb)(const char *, void *), void *ud) {
     g_out_cb = cb;
     g_out_ud = ud;
+}
+
+void syscall_set_input_cb(int (*cb)(void *), void *ud) {
+    g_in_cb = cb;
+    g_in_ud = ud;
+}
+
+// GUI-aware blocking key read for shell builtins.
+// In GUI mode (g_in_cb set): yields to GUI task each time the keyboard queue
+// is empty, so the desktop stays live and redraws while waiting for input.
+// In VGA text mode: identical to keyboard_wait_event().
+key_event_t syscall_wait_key(void) {
+    for (;;) {
+        if (keyboard_has_event()) {
+            key_event_t ev = keyboard_get_event();
+            if (ev.released) continue;
+            return ev;
+        }
+        if (g_in_cb) {
+            sched_yield();   // let GUI pump a frame and collect keypresses
+        } else {
+            asm volatile("hlt");  // VGA text mode: wait for IRQ
+        }
+    }
 }

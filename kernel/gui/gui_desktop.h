@@ -141,6 +141,10 @@ typedef struct {
     uint32_t tet_speed;         // ticks between drops
     // terminal shell state (real shell)
     int32_t  term_initialized;
+    uint8_t  term_app_running;          // 1 if a sub-app is running
+    uint8_t  term_in_head;              // circular input buffer write index
+    uint8_t  term_in_tail;             // circular input buffer read index
+    char     term_inbuf[256];           // keyboard input ring buffer
 } AppState;
 
 // ============================================================
@@ -168,6 +172,7 @@ typedef struct {
 // Public API
 // ============================================================
 void gui_run(void);
+void gui_pump(void);  // run one GUI frame; safe to call from syscall context
 void gui_fill_rect(int32_t x, int32_t y, int32_t w, int32_t h, uint32_t col);
 void gui_draw_hline(int32_t x, int32_t y, int32_t len, uint32_t col);
 void gui_draw_vline(int32_t x, int32_t y, int32_t len, uint32_t col);

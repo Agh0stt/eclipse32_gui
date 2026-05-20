@@ -296,9 +296,9 @@ static const char *alias_get(const char *name) {
 // readline
 // =============================================================================
 static void rl_clear(int n) {
-    for(int i=0;i<n;i++) vga_putchar('\b');
-    for(int i=0;i<n;i++) vga_putchar(' ');
-    for(int i=0;i<n;i++) vga_putchar('\b');
+    for(int i=0;i<n;i++) term_putchar('\b');
+    for(int i=0;i<n;i++) term_putchar(' ');
+    for(int i=0;i<n;i++) term_putchar('\b');
 }
 
 static void readline(char *buf, int max) {
@@ -307,7 +307,7 @@ static void readline(char *buf, int max) {
     history_pos=history_count;
 
     while (1) {
-        key_event_t ev = keyboard_wait_event();
+        key_event_t ev = syscall_wait_key();  // GUI-aware: yields instead of hlt
         if (ev.released) continue;
 
         // ESC key (keycode)
@@ -316,40 +316,40 @@ static void readline(char *buf, int max) {
         if (ev.keycode == KEY_ASCII) {
             char c = ev.ascii;
 
-            if (c=='\n'||c=='\r') { buf[len]=0; vga_putchar('\n'); return; }
+            if (c=='\n'||c=='\r') { buf[len]=0; term_putchar('\n'); return; }
 
             if (ev.ctrl && (c==3||c=='c'||c=='C')) {
                 buf[0]=0; term_puts("^C\n"); return;
             }
             if (ev.ctrl && (c==12||c=='l'||c=='L')) {
-                vga_clear(); term_reset(); buf[0]=0; vga_putchar('\n'); return;
+                vga_clear(); term_reset(); buf[0]=0; term_putchar('\n'); return;
             }
             if (ev.ctrl && (c==1||c=='a'||c=='A')) {
-                for(int i=0;i<cursor;i++) vga_putchar('\b'); cursor=0; continue;
+                for(int i=0;i<cursor;i++) term_putchar('\b'); cursor=0; continue;
             }
             if (ev.ctrl && (c==5||c=='e'||c=='E')) {
-                while(cursor<len){vga_putchar(buf[cursor]);cursor++;} continue;
+                while(cursor<len){term_putchar(buf[cursor]);cursor++;} continue;
             }
             if (ev.ctrl && (c==11||c=='k'||c=='K')) {
                 int old=len; len=cursor; buf[len]=0;
-                for(int i=cursor;i<old;i++) vga_putchar(' ');
-                for(int i=cursor;i<old;i++) vga_putchar('\b');
+                for(int i=cursor;i<old;i++) term_putchar(' ');
+                for(int i=cursor;i<old;i++) term_putchar('\b');
                 continue;
             }
             if (ev.ctrl && (c==21||c=='u'||c=='U')) {
-                for(int i=0;i<cursor;i++) vga_putchar('\b');
-                for(int i=0;i<len;i++) vga_putchar(' ');
-                for(int i=0;i<len;i++) vga_putchar('\b');
+                for(int i=0;i<cursor;i++) term_putchar('\b');
+                for(int i=0;i<len;i++) term_putchar(' ');
+                for(int i=0;i<len;i++) term_putchar('\b');
                 len=0; cursor=0; buf[0]=0; continue;
             }
             if (c=='\b'||c==127) {
                 if (cursor>0) {
                     for(int i=cursor-1;i<len-1;i++) buf[i]=buf[i+1];
                     len--; cursor--; buf[len]=0;
-                    vga_putchar('\b');
-                    for(int i=cursor;i<len;i++) vga_putchar(buf[i]);
-                    vga_putchar(' ');
-                    for(int i=cursor;i<=len;i++) vga_putchar('\b');
+                    term_putchar('\b');
+                    for(int i=cursor;i<len;i++) term_putchar(buf[i]);
+                    term_putchar(' ');
+                    for(int i=cursor;i<=len;i++) term_putchar('\b');
                 }
                 continue;
             }
@@ -357,8 +357,8 @@ static void readline(char *buf, int max) {
             if (c>=32 && len<max-1) {
                 for(int i=len;i>cursor;i--) buf[i]=buf[i-1];
                 buf[cursor]=c; len++; buf[len]=0;
-                for(int i=cursor;i<len;i++) vga_putchar(buf[i]);
-                for(int i=cursor+1;i<len;i++) vga_putchar('\b');
+                for(int i=cursor;i<len;i++) term_putchar(buf[i]);
+                for(int i=cursor+1;i<len;i++) term_putchar('\b');
                 cursor++;
             }
         } else {
@@ -373,17 +373,17 @@ static void readline(char *buf, int max) {
                 rl_clear(len); kstrncpy(buf,n?n:"",max-1); len=(int)kstrlen(buf); cursor=len; term_puts(buf);
                 break;
             }
-            case KEY_LEFT:  if(cursor>0){cursor--;vga_putchar('\b');} break;
-            case KEY_RIGHT: if(cursor<len){vga_putchar(buf[cursor]);cursor++;} break;
-            case KEY_HOME:  for(int i=0;i<cursor;i++)vga_putchar('\b'); cursor=0; break;
-            case KEY_END:   while(cursor<len){vga_putchar(buf[cursor]);cursor++;} break;
+            case KEY_LEFT:  if(cursor>0){cursor--;term_putchar('\b');} break;
+            case KEY_RIGHT: if(cursor<len){term_putchar(buf[cursor]);cursor++;} break;
+            case KEY_HOME:  for(int i=0;i<cursor;i++)term_putchar('\b'); cursor=0; break;
+            case KEY_END:   while(cursor<len){term_putchar(buf[cursor]);cursor++;} break;
             case KEY_DELETE:
                 if(cursor<len){
                     for(int i=cursor;i<len-1;i++) buf[i]=buf[i+1];
                     len--; buf[len]=0;
-                    for(int i=cursor;i<len;i++) vga_putchar(buf[i]);
-                    vga_putchar(' ');
-                    for(int i=cursor;i<=len;i++) vga_putchar('\b');
+                    for(int i=cursor;i<len;i++) term_putchar(buf[i]);
+                    term_putchar(' ');
+                    for(int i=cursor;i<=len;i++) term_putchar('\b');
                 }
                 break;
             default: break;
