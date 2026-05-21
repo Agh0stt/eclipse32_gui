@@ -8,43 +8,71 @@
 // ============================================================
 #define RGB(r,g,b) (((uint32_t)(r)<<16)|((uint32_t)(g)<<8)|(uint32_t)(b))
 
-#define COL_DESKTOP        RGB(0,128,128)
-#define COL_WIN_BG         RGB(192,192,192)
-#define COL_WIN_TITLE_ACT  RGB(0,0,128)
-#define COL_WIN_TITLE_INA  RGB(128,128,128)
-#define COL_WIN_TITLE_TXT  RGB(255,255,255)
-#define COL_BORDER_LIGHT   RGB(255,255,255)
-#define COL_BORDER_DARK    RGB(64,64,64)
-#define COL_BUTTON_FACE    RGB(192,192,192)
-#define COL_BUTTON_TXT     RGB(0,0,0)
-#define COL_TEXT           RGB(0,0,0)
-#define COL_ICON_LABEL     RGB(255,255,255)
-#define COL_ICON_SEL_BG    RGB(0,0,128)
-#define COL_TASKBAR_BG     RGB(192,192,192)
-#define COL_WHITE          RGB(255,255,255)
-#define COL_BLACK          RGB(0,0,0)
-#define COL_LTGREY         RGB(224,224,224)
-#define COL_DKGREY         RGB(96,96,96)
-#define COL_RED            RGB(180,0,0)
-#define COL_GREEN          RGB(0,160,0)
-#define COL_BLUE           RGB(0,0,200)
-#define COL_YELLOW         RGB(200,200,0)
-#define COL_TERM_BG        RGB(0,0,0)
-#define COL_TERM_TXT       RGB(0,220,0)
-#define COL_MENU_SEL       RGB(0,0,128)
-#define COL_MENU_SEL_TXT   RGB(255,255,255)
-#define COL_MENU_TXT       RGB(0,0,0)
+// ============================================================
+// Theme IDs
+// ============================================================
+#define THEME_MODERN   0   // dark panel, blue gradient desktop
+#define THEME_CLASSIC  1   // grey taskbar at bottom, teal desktop
+#define THEME_COUNT    2
+
+// ============================================================
+// Runtime color variables — set by apply_theme(), used everywhere
+// All code reads these variables; never the old #define values.
+// ============================================================
+extern uint32_t COL_DESKTOP;
+extern uint32_t COL_WIN_BG;
+extern uint32_t COL_WIN_TITLE_ACT;
+extern uint32_t COL_WIN_TITLE_INA;
+extern uint32_t COL_WIN_TITLE_TXT;
+extern uint32_t COL_BORDER_LIGHT;
+extern uint32_t COL_BORDER_DARK;
+extern uint32_t COL_BUTTON_FACE;
+extern uint32_t COL_BUTTON_TXT;
+extern uint32_t COL_TEXT;
+extern uint32_t COL_ICON_LABEL;
+extern uint32_t COL_ICON_SEL_BG;
+extern uint32_t COL_TASKBAR_BG;
+extern uint32_t COL_TASKBAR_TXT;
+extern uint32_t COL_MENU_BG;
+extern uint32_t COL_MENU_SEL;
+extern uint32_t COL_MENU_SEL_TXT;
+extern uint32_t COL_MENU_TXT;
+extern uint32_t COL_MENU_DIV;
+
+// Fixed colors — never change with theme
+#define COL_WHITE   RGB(255,255,255)
+#define COL_BLACK   RGB(0,0,0)
+#define COL_LTGREY  RGB(224,224,224)
+#define COL_DKGREY  RGB(96,96,96)
+#define COL_RED     RGB(200,40,40)
+#define COL_GREEN   RGB(40,180,40)
+#define COL_BLUE    RGB(30,100,210)
+#define COL_YELLOW  RGB(210,180,0)
+#define COL_TERM_BG RGB(20,20,30)
+#define COL_TERM_TXT RGB(80,220,80)
+
+// Current active theme index
+extern int g_theme;
+
+// Apply a theme — call once at startup, and any time user switches
+void apply_theme(int theme_id);
 
 // ============================================================
 // Screen / layout
 // ============================================================
 #define SCREEN_W    800
 #define SCREEN_H    600
-#define TASKBAR_H    28
-#define TITLE_BAR_H  18
+#define TASKBAR_H    30
+#define TITLE_BAR_H  20
 #define BORDER_W      2
 #define FONT_W        8
 #define FONT_H        8
+
+// These change with theme — read g_theme at render time
+// THEME_MODERN:  taskbar at top  (TASKBAR_Y=0, desktop starts at TASKBAR_H)
+// THEME_CLASSIC: taskbar at bottom (TASKBAR_Y=SCREEN_H-TASKBAR_H, desktop starts at 0)
+#define TASKBAR_Y_FOR(t)   ((t)==THEME_CLASSIC ? (SCREEN_H-TASKBAR_H) : 0)
+#define DESKTOP_TOP_FOR(t) ((t)==THEME_CLASSIC ? 0 : TASKBAR_H)
 
 // ============================================================
 // App enum  (32 apps)
@@ -61,6 +89,7 @@ typedef enum {
     APP_LOGVIEWER,     APP_HELP,         APP_ABOUT,        APP_IPCONFIG,
     APP_TETRIS,
     APP_OS32,       /* launches hello.os32 directly from desktop */
+    APP_SETTINGS,   /* theme / settings panel */
     APP_COUNT
 } AppType;
 
@@ -129,6 +158,8 @@ typedef struct {
     int32_t  fm_count;      // -1 = not loaded
     int32_t  fm_sel;        // index of selected file (-1 = none)
     uint32_t fm_last_click; // g_tick at last click (for double-click detect)
+    int32_t  fm_mode;       // 0=list 1=new 2=rename 3=edit 4=confirm-delete
+    char     fm_input[64];  // text input buffer for new/rename dialogs
     // tetris
     uint8_t  tet_board[20*10];  // 20 rows x 10 cols
     int8_t   tet_px, tet_py;    // current piece position

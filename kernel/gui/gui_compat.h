@@ -84,3 +84,32 @@ static inline int ksprintf(char *buf, const char *fmt, ...) {
     *out=0; __builtin_va_end(ap);
     return (int)(out-buf);
 }
+
+// --- Filesystem helpers for File Manager ---
+static inline int fs_delete(const char *name) {
+    if (!fs_is_mounted() || !name) return -1;
+    return fat32_delete(name);
+}
+static inline int fs_rename(const char *oldname, const char *newname) {
+    if (!fs_is_mounted() || !oldname || !newname) return -1;
+    return fat32_rename(oldname, newname);
+}
+// Write a text file (create or overwrite)
+static inline int fs_write_file(const char *name, const char *data, uint32_t len) {
+    if (!fs_is_mounted() || !name) return -1;
+    int fd = fat32_open(name, FAT32_O_WRONLY | FAT32_O_CREAT | FAT32_O_TRUNC);
+    if (fd < 0) return -1;
+    int r = fat32_write(fd, data, len);
+    fat32_close(fd);
+    return r;
+}
+// Read a file into a buffer, returns bytes read
+static inline int fs_read_file(const char *name, char *buf, uint32_t maxlen) {
+    if (!fs_is_mounted() || !name) return -1;
+    int fd = fat32_open(name, FAT32_O_RDONLY);
+    if (fd < 0) return -1;
+    int r = fat32_read(fd, buf, maxlen - 1);
+    fat32_close(fd);
+    if (r > 0) buf[r] = 0;
+    return r;
+}

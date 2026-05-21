@@ -1,4 +1,4 @@
-// Eclipse32 GUI  –  Windows 3.1-style desktop
+// Eclipse32 GUI  –  Eclipse32-style desktop
 // Fixes: double-buffer (no flicker), cursor always on top,
 //        proper window z-order, start menu, 32 apps, terminal window
 
@@ -10,6 +10,78 @@
 #include "../syscall/syscall.h"
 #include "../sched/sched.h"
 #include "gui_compat.h"
+
+// ============================================================
+// Theme system — runtime color variables
+// ============================================================
+int g_theme = THEME_MODERN;  // default: modern
+
+uint32_t COL_DESKTOP;
+uint32_t COL_WIN_BG;
+uint32_t COL_WIN_TITLE_ACT;
+uint32_t COL_WIN_TITLE_INA;
+uint32_t COL_WIN_TITLE_TXT;
+uint32_t COL_BORDER_LIGHT;
+uint32_t COL_BORDER_DARK;
+uint32_t COL_BUTTON_FACE;
+uint32_t COL_BUTTON_TXT;
+uint32_t COL_TEXT;
+uint32_t COL_ICON_LABEL;
+uint32_t COL_ICON_SEL_BG;
+uint32_t COL_TASKBAR_BG;
+uint32_t COL_TASKBAR_TXT;
+uint32_t COL_MENU_BG;
+uint32_t COL_MENU_SEL;
+uint32_t COL_MENU_SEL_TXT;
+uint32_t COL_MENU_TXT;
+uint32_t COL_MENU_DIV;
+
+void apply_theme(int theme_id) {
+    g_theme = theme_id;
+    if (theme_id == THEME_CLASSIC) {
+        // ── Classic: Eclipse32 grey look ──
+        COL_DESKTOP       = RGB(0, 128, 128);     // teal
+        COL_WIN_BG        = RGB(192, 192, 192);
+        COL_WIN_TITLE_ACT = RGB(0, 0, 128);       // deep blue
+        COL_WIN_TITLE_INA = RGB(128, 128, 128);
+        COL_WIN_TITLE_TXT = RGB(255, 255, 255);
+        COL_BORDER_LIGHT  = RGB(255, 255, 255);
+        COL_BORDER_DARK   = RGB(64, 64, 64);
+        COL_BUTTON_FACE   = RGB(192, 192, 192);
+        COL_BUTTON_TXT    = RGB(0, 0, 0);
+        COL_TEXT          = RGB(0, 0, 0);
+        COL_ICON_LABEL    = RGB(255, 255, 255);
+        COL_ICON_SEL_BG   = RGB(0, 0, 128);
+        COL_TASKBAR_BG    = RGB(192, 192, 192);   // grey bottom bar
+        COL_TASKBAR_TXT   = RGB(0, 0, 0);
+        COL_MENU_BG       = RGB(192, 192, 192);
+        COL_MENU_SEL      = RGB(0, 0, 128);
+        COL_MENU_SEL_TXT  = RGB(255, 255, 255);
+        COL_MENU_TXT      = RGB(0, 0, 0);
+        COL_MENU_DIV      = RGB(128, 128, 128);
+    } else {
+        // ── Modern: dark panel, blue accent ──
+        COL_DESKTOP       = RGB(30, 87, 153);
+        COL_WIN_BG        = RGB(236, 236, 236);
+        COL_WIN_TITLE_ACT = RGB(50, 120, 200);
+        COL_WIN_TITLE_INA = RGB(110, 110, 120);
+        COL_WIN_TITLE_TXT = RGB(255, 255, 255);
+        COL_BORDER_LIGHT  = RGB(255, 255, 255);
+        COL_BORDER_DARK   = RGB(80, 80, 80);
+        COL_BUTTON_FACE   = RGB(220, 220, 220);
+        COL_BUTTON_TXT    = RGB(30, 30, 30);
+        COL_TEXT          = RGB(20, 20, 20);
+        COL_ICON_LABEL    = RGB(255, 255, 255);
+        COL_ICON_SEL_BG   = RGB(50, 120, 200);
+        COL_TASKBAR_BG    = RGB(42, 42, 42);      // dark top panel
+        COL_TASKBAR_TXT   = RGB(230, 230, 230);
+        COL_MENU_BG       = RGB(48, 48, 48);
+        COL_MENU_SEL      = RGB(70, 140, 220);
+        COL_MENU_SEL_TXT  = RGB(255, 255, 255);
+        COL_MENU_TXT      = RGB(220, 220, 220);
+        COL_MENU_DIV      = RGB(80, 80, 80);
+    }
+}
 
 // ============================================================
 // Compatibility shims — bridge old GUI to new driver APIs
@@ -375,6 +447,7 @@ static const MenuItem g_menu_items[] = {
     { "Network Info",   APP_NETINFO     },
     { "IP Config",      APP_IPCONFIG    },
     { "Help",           APP_HELP        },
+    { "Settings",       APP_SETTINGS    },
     { "About",          APP_ABOUT       },
 };
 #define N_MENU_ITEMS  ((int32_t)(sizeof(g_menu_items)/sizeof(g_menu_items[0])))
@@ -387,14 +460,14 @@ static int32_t     g_menu_hover = -1;
 
 // Desktop icons (left column, single-click selects, double-click opens)
 static DesktopIcon g_icons[] = {
-    {  8,  50, APP_TERMINAL,   "Terminal",  0 },
-    {  8, 105, APP_FILEMAN,    "Files",     0 },
-    {  8, 160, APP_NOTEPAD,    "Notepad",   0 },
-    {  8, 215, APP_CALCULATOR, "Calc",      0 },
-    {  8, 270, APP_SYSINFO,    "Sys Info",  0 },
-    {  8, 325, APP_PAINT,      "Paint",     0 },
-    {  8, 380, APP_SNAKE,      "Snake",     0 },
-    {  8, 435, APP_ABOUT,      "About",     0 },
+    {  8,  TASKBAR_H+10, APP_TERMINAL,   "Terminal",  0 },
+    {  8,  TASKBAR_H+65, APP_FILEMAN,    "Files",     0 },
+    {  8, TASKBAR_H+120, APP_NOTEPAD,    "Notepad",   0 },
+    {  8, TASKBAR_H+175, APP_CALCULATOR, "Calc",      0 },
+    {  8, TASKBAR_H+230, APP_SYSINFO,    "Sys Info",  0 },
+    {  8, TASKBAR_H+285, APP_PAINT,      "Paint",     0 },
+    {  8, TASKBAR_H+340, APP_SNAKE,      "Snake",     0 },
+    {  8, TASKBAR_H+395, APP_SETTINGS,   "Settings",  0 },
 };
 #define N_ICONS  ((int32_t)(sizeof(g_icons)/sizeof(g_icons[0])))
 
@@ -513,7 +586,7 @@ static int32_t open_window(AppType app) {
             "  Single click = select icon\n"
             "  Double click = open app\n"
             "  Start button = app menu\n\n"
-            "Windows:\n"
+            "App windows:\n"
             "  Drag title bar = move window\n"
             "  [x] button = close\n"
             "  Taskbar = switch windows\n\n"
@@ -522,18 +595,19 @@ static int32_t open_window(AppType app) {
             "  Games, tools, utilities\n");
         w->st.text_len=(int32_t)kstrlen(w->st.text); break;
     case APP_ABOUT:       kstrcpy(w->title,"About Eclipse32"); w->w=300;w->h=220; break;
+    case APP_SETTINGS:    kstrcpy(w->title,"Settings");        w->w=360;w->h=300; break;
     default:              kstrcpy(w->title,"Window");        w->w=320;w->h=240; break;
     }
 
-    // Cascade position
+    // Cascade position (respect theme desktop area)
+    int32_t desk_top = DESKTOP_TOP_FOR(g_theme);
     int32_t off = g_nwins * 22;
     w->x = 60 + (off % 300);
-    w->y = 30 + (off % 200);
-    // Clamp
-    if (w->x + w->w > SCREEN_W - 4)      w->x = SCREEN_W - w->w - 4;
-    if (w->y + w->h > SCREEN_H - TASKBAR_H - 4) w->y = 4;
+    w->y = desk_top + 10 + (off % 180);
+    if (w->x + w->w > SCREEN_W - 4)  w->x = SCREEN_W - w->w - 4;
+    if (w->y + w->h > SCREEN_H - 4)  w->y = desk_top + 4;
     if (w->x < 0) w->x = 0;
-    if (w->y < 0) w->y = 0;
+    if (w->y < desk_top) w->y = desk_top;
 
     g_nwins++;
     bring_front(g_nwins - 1);
@@ -552,28 +626,35 @@ static void close_window(int32_t idx) {
 // ============================================================
 static void draw_chrome(Window *w, uint8_t active) {
     int32_t x=w->x, y=w->y, ww=w->w, wh=w->h;
-    // Fill + outer 3D
+    // Window shadow
+    gui_fill_rect(x+4, y+4, ww, wh, RGB(0,0,0));
+    // Fill + outer border
     gui_fill_rect(x, y, ww, wh, COL_WIN_BG);
-    gui_draw_3d_box(x, y, ww, wh, 1);
-    // Title bar
-    uint32_t tc = active ? COL_WIN_TITLE_ACT : COL_WIN_TITLE_INA;
-    int32_t tbar_w = ww - 2*BORDER_W - TITLE_BAR_H - 1;
-    gui_fill_rect(x+BORDER_W, y+BORDER_W, tbar_w, TITLE_BAR_H, tc);
-    // Title text (clipped)
-    gui_puts_clip(x+BORDER_W+3, y+BORDER_W+(TITLE_BAR_H-FONT_H)/2,
-                  w->title, COL_WIN_TITLE_TXT, tc,
-                  x+BORDER_W+3, y+BORDER_W,
-                  tbar_w-6, TITLE_BAR_H);
-    // Close [x]
+    gui_draw_rect_border(x, y, ww, wh, RGB(130,130,140), RGB(90,90,100));
+    // Title bar gradient (simple two-tone)
+    uint32_t tc1 = active ? RGB(50,120,200) : RGB(110,110,120);
+    uint32_t tc2 = active ? RGB(30,90,170)  : RGB(90,90,100);
+    int32_t tbar_w = ww - 2*BORDER_W;
+    int32_t tbar_x = x + BORDER_W;
+    int32_t tbar_y = y + BORDER_W;
+    for(int32_t row=0; row<TITLE_BAR_H; row++){
+        uint32_t c = (row < TITLE_BAR_H/2) ? tc1 : tc2;
+        gui_draw_hline(tbar_x, tbar_y+row, tbar_w-TITLE_BAR_H-1, c);
+    }
+    // Title text
+    gui_puts_clip(tbar_x+5, tbar_y+(TITLE_BAR_H-FONT_H)/2,
+                  w->title, RGB(255,255,255), tc1,
+                  tbar_x+3, tbar_y, tbar_w-TITLE_BAR_H-6, TITLE_BAR_H);
+    // Close button [x] — red on hover otherwise dark
     int32_t bx = x+ww-BORDER_W-TITLE_BAR_H;
     int32_t by = y+BORDER_W;
-    gui_fill_rect(bx, by, TITLE_BAR_H, TITLE_BAR_H, COL_BUTTON_FACE);
-    gui_draw_3d_box(bx, by, TITLE_BAR_H, TITLE_BAR_H, 1);
-    gui_puts(bx+5, by+(TITLE_BAR_H-FONT_H)/2, "x", COL_BUTTON_TXT, COL_BUTTON_FACE);
+    gui_fill_rect(bx, by, TITLE_BAR_H, TITLE_BAR_H, RGB(180,50,50));
+    gui_draw_rect_border(bx, by, TITLE_BAR_H, TITLE_BAR_H, RGB(220,80,80), RGB(130,30,30));
+    gui_puts(bx+5, by+(TITLE_BAR_H-FONT_H)/2, "x", RGB(255,255,255), RGB(180,50,50));
     // Client sunken border
     int32_t cax=x+BORDER_W, cay=y+BORDER_W+TITLE_BAR_H+1;
     int32_t caw=ww-2*BORDER_W, cah=wh-(2*BORDER_W+TITLE_BAR_H+1);
-    gui_draw_3d_box(cax, cay, caw, cah, 0);
+    gui_draw_rect_border(cax, cay, caw, cah, RGB(140,140,150), RGB(200,200,210));
 }
 
 // ============================================================
@@ -684,22 +765,49 @@ static void draw_icon(DesktopIcon *ic) {
 // --- Generic text display (Notepad, WordPad, Help, TextViewer) ---
 static void render_text_app(Window *w, int32_t mx, int32_t my, uint8_t click,
                               uint8_t editable) {
-    (void)mx;(void)my;(void)click;
     int32_t cx=win_ca_x(w),cy=win_ca_y(w),cw=win_ca_w(w),ch=win_ca_h(w);
-    gui_fill_rect(cx,cy,cw,ch,RGB(255,255,255));
+
+    // Toolbar for editable apps (Notepad)
+    int32_t txt_y=cy;
+    if(editable){
+        int32_t tb_h=18;
+        gui_fill_rect(cx,cy,cw,tb_h,RGB(230,230,235));
+        gui_draw_hline(cx,cy+tb_h-1,cw,RGB(180,180,190));
+        if(gui_button(cx+2,cy+2,38,14,"New",mx,my,click)){
+            kmemset(w->st.text,0,WIN_TEXT_BUF);
+            w->st.text_len=0;
+        }
+        if(gui_button(cx+44,cy+2,38,14,"Save",mx,my,click)){
+            // Save to a default notepad.txt on disk
+            fs_write_file("notepad.txt",w->st.text,(uint32_t)w->st.text_len);
+        }
+        if(gui_button(cx+86,cy+2,42,14,"Load",mx,my,click)){
+            int r=fs_read_file("notepad.txt",w->st.text,WIN_TEXT_BUF);
+            if(r>0){w->st.text_len=r; w->st.text[r]=0;}
+        }
+        txt_y=cy+tb_h+1;
+    }
+
+    int32_t txt_h=ch-(txt_y-cy);
+    gui_fill_rect(cx,txt_y,cw,txt_h,RGB(255,255,255));
+    gui_draw_rect_border(cx,txt_y,cw,txt_h,RGB(150,150,160),RGB(200,200,210));
     // Render text
     const char *p=w->st.text;
-    int32_t tx=cx+3, ty=cy+3-w->st.scroll_y;
+    int32_t tx=cx+3, ty=txt_y+3-w->st.scroll_y;
     int32_t lx=cx+3;
     while(*p){
         if(*p=='\n'){tx=lx;ty+=FONT_H+1;}
         else {
-            if(ty>=cy-FONT_H && ty<cy+ch && tx<cx+cw)
+            if(ty>=txt_y-FONT_H && ty<txt_y+txt_h && tx<cx+cw)
                 gui_putc(tx,ty,*p,COL_TEXT,RGB(255,255,255));
             tx+=FONT_W;
         }
         p++;
     }
+    // Blinking cursor for editable
+    if(editable && (get_ticks()/50)%2==0)
+        gui_fill_rect(tx,ty,FONT_W,FONT_H,RGB(50,100,200));
+
     if(editable){
         char kc=kb_getchar_nowait();
         if(kc){
@@ -710,6 +818,7 @@ static void render_text_app(Window *w, int32_t mx, int32_t my, uint8_t click,
             }
         }
     }
+    (void)mx;(void)my;(void)click;
 }
 
 // --- Calculator ---
@@ -981,6 +1090,13 @@ static void render_regedit(Window *w, int32_t mx, int32_t my, uint8_t click){
 }
 
 // --- File Manager ---
+// Modes for the file manager panel
+#define FM_MODE_LIST    0   // normal file listing
+#define FM_MODE_NEW     1   // typing new filename
+#define FM_MODE_RENAME  2   // typing rename target
+#define FM_MODE_EDIT    3   // editing file content (simple text editor)
+#define FM_MODE_CONFIRM 4   // confirm delete dialog
+
 #define FM_MAX 32
 
 // Returns 1 if filename ends with ".os32"
@@ -995,94 +1111,255 @@ static int fm_is_executable(const char *name){
 
 static void render_fileman(Window *w, int32_t mx, int32_t my, uint8_t click){
     int32_t cx=win_ca_x(w),cy=win_ca_y(w),cw=win_ca_w(w),ch=win_ca_h(w);
-    gui_fill_rect(cx,cy,cw,ch,RGB(255,255,255));
+    AppState *st=&w->st;
 
-    // Header bar
-    gui_fill_rect(cx,cy,cw,FONT_H+4,COL_WIN_TITLE_ACT);
-    gui_puts(cx+4,cy+2,"Name",RGB(255,255,255),COL_WIN_TITLE_ACT);
-    gui_puts(cx+cw-56,cy+2,"Size",RGB(255,255,255),COL_WIN_TITLE_ACT);
-
-    // Refresh button
-    if(gui_button(cx+cw-80,cy+FONT_H+6,60,14,"Refresh",mx,my,click)){
-        w->st.fm_count=-1;
-        w->st.fm_sel=-1;
+    // ---- Mode: edit file content ----
+    if(st->fm_mode==FM_MODE_EDIT){
+        gui_fill_rect(cx,cy,cw,ch,RGB(255,255,255));
+        // Title bar
+        gui_fill_rect(cx,cy,cw,FONT_H+6,RGB(50,100,160));
+        char etitle[80]; kstrcpy(etitle,"Editing: ");
+        if(st->fm_sel>=0&&st->fm_sel<st->fm_count) kstrncat(etitle,st->fm_names[st->fm_sel],40);
+        gui_puts(cx+4,cy+3,etitle,RGB(255,255,255),RGB(50,100,160));
+        // Editable text area
+        int32_t ta_y=cy+FONT_H+8;
+        int32_t ta_h=ch-FONT_H-30;
+        gui_fill_rect(cx,ta_y,cw,ta_h,RGB(255,255,255));
+        gui_draw_rect_border(cx,ta_y,cw,ta_h,RGB(150,150,150),RGB(200,200,200));
+        // Render text
+        const char *p=st->text;
+        int32_t tx=cx+3, ty2=ta_y+3-st->scroll_y;
+        while(*p){
+            if(*p=='\n'){tx=cx+3;ty2+=FONT_H+1;}
+            else{
+                if(ty2>=ta_y&&ty2<ta_y+ta_h&&tx<cx+cw)
+                    gui_putc(tx,ty2,*p,COL_TEXT,RGB(255,255,255));
+                tx+=FONT_W;
+            }
+            p++;
+        }
+        // Blinking cursor at end
+        if((get_ticks()/50)%2==0) gui_fill_rect(tx,ty2,FONT_W,FONT_H,RGB(50,100,200));
+        // Keyboard input
+        char kc=kb_getchar_nowait();
+        if(kc){
+            if(kc=='\b'){if(st->text_len>0){st->text_len--;st->text[st->text_len]=0;}}
+            else if(st->text_len<WIN_TEXT_BUF-2){st->text[st->text_len++]=kc;st->text[st->text_len]=0;}
+        }
+        // Bottom toolbar: Save / Cancel
+        int32_t by2=cy+ch-24;
+        gui_fill_rect(cx,by2,cw,24,RGB(230,230,230));
+        gui_draw_hline(cx,by2,cw,RGB(160,160,160));
+        if(gui_button(cx+4,by2+4,70,16,"Save",mx,my,click)){
+            if(st->fm_sel>=0&&st->fm_sel<st->fm_count){
+                fs_write_file(st->fm_names[st->fm_sel],st->text,(uint32_t)st->text_len);
+            }
+            st->fm_mode=FM_MODE_LIST; st->fm_count=-1;
+        }
+        if(gui_button(cx+80,by2+4,70,16,"Cancel",mx,my,click)){
+            st->fm_mode=FM_MODE_LIST;
+        }
+        if(gui_button(cx+156,by2+4,100,16,"Save As New",mx,my,click)){
+            st->fm_mode=FM_MODE_NEW; // repurpose new-file mode to save as
+        }
+        return;
     }
-    gui_draw_hline(cx,cy+FONT_H+4,cw,COL_BORDER_DARK);
 
-    // Load (or reload) directory listing into per-window state
-    if(w->st.fm_count<0){
-        w->st.fm_count=fs_list(w->st.fm_names,FM_MAX);
-        for(int32_t i=0;i<w->st.fm_count;i++)
-            w->st.fm_sizes[i]=fs_size(w->st.fm_names[i]);
-        w->st.fm_sel=-1;
+    // ---- Mode: confirm delete ----
+    if(st->fm_mode==FM_MODE_CONFIRM){
+        gui_fill_rect(cx,cy,cw,ch,COL_WIN_BG);
+        gui_fill_rect(cx,cy,cw,FONT_H+6,RGB(180,40,40));
+        gui_puts(cx+4,cy+3,"Confirm Delete",RGB(255,255,255),RGB(180,40,40));
+        char msg[80]; kstrcpy(msg,"Delete: ");
+        if(st->fm_sel>=0&&st->fm_sel<st->fm_count) kstrncat(msg,st->fm_names[st->fm_sel],40);
+        kstrcat(msg," ?");
+        gui_puts(cx+8,cy+30,msg,COL_TEXT,COL_WIN_BG);
+        if(gui_button(cx+10,cy+55,80,20,"Yes, Delete",mx,my,click)){
+            if(st->fm_sel>=0&&st->fm_sel<st->fm_count)
+                fs_delete(st->fm_names[st->fm_sel]);
+            st->fm_mode=FM_MODE_LIST; st->fm_count=-1; st->fm_sel=-1;
+        }
+        if(gui_button(cx+100,cy+55,60,20,"Cancel",mx,my,click)){
+            st->fm_mode=FM_MODE_LIST;
+        }
+        return;
     }
 
-    int32_t ty=cy+FONT_H+24-w->st.scroll_y;
-    char sb[12];
-    for(int32_t i=0;i<w->st.fm_count;i++,ty+=FONT_H+3){
-        if(ty+FONT_H<cy+FONT_H+24) continue;
-        if(ty>cy+ch) break;
+    // ---- Mode: new file / rename: show input dialog ----
+    if(st->fm_mode==FM_MODE_NEW||st->fm_mode==FM_MODE_RENAME){
+        gui_fill_rect(cx,cy,cw,ch,COL_WIN_BG);
+        const char *dlg_title=(st->fm_mode==FM_MODE_NEW)?"New File Name:":"Rename to:";
+        gui_fill_rect(cx,cy,cw,FONT_H+6,RGB(50,100,160));
+        gui_puts(cx+4,cy+3,dlg_title,RGB(255,255,255),RGB(50,100,160));
+        // Input box
+        gui_fill_rect(cx+4,cy+24,cw-8,18,RGB(255,255,255));
+        gui_draw_3d_box(cx+4,cy+24,cw-8,18,0);
+        gui_puts(cx+7,cy+28,st->fm_input,COL_TEXT,RGB(255,255,255));
+        // Blinking cursor
+        int32_t il=(int32_t)kstrlen(st->fm_input);
+        if((get_ticks()/50)%2==0)
+            gui_fill_rect(cx+7+il*FONT_W,cy+28,FONT_W,FONT_H,RGB(50,100,200));
+        // Input handling
+        char kc=kb_getchar_nowait();
+        if(kc){
+            if(kc=='\r'||kc=='\n'){
+                if(st->fm_mode==FM_MODE_NEW){
+                    // Create empty file
+                    if(kstrlen(st->fm_input)>0)
+                        fs_write_file(st->fm_input,"",0);
+                } else {
+                    // Rename selected file
+                    if(st->fm_sel>=0&&st->fm_sel<st->fm_count&&kstrlen(st->fm_input)>0)
+                        fs_rename(st->fm_names[st->fm_sel],st->fm_input);
+                }
+                st->fm_mode=FM_MODE_LIST; st->fm_count=-1; st->fm_sel=-1;
+                kmemset(st->fm_input,0,sizeof(st->fm_input));
+            } else if(kc==27){ // ESC
+                st->fm_mode=FM_MODE_LIST;
+                kmemset(st->fm_input,0,sizeof(st->fm_input));
+            } else if(kc=='\b'){
+                int32_t l=(int32_t)kstrlen(st->fm_input);
+                if(l>0) st->fm_input[l-1]=0;
+            } else if(kstrlen(st->fm_input)<(uint32_t)EFS_FILENAME_MAX-2){
+                int32_t l=(int32_t)kstrlen(st->fm_input);
+                st->fm_input[l]=kc; st->fm_input[l+1]=0;
+            }
+        }
+        if(gui_button(cx+4,cy+50,60,16,"OK",mx,my,click)){
+            if(st->fm_mode==FM_MODE_NEW){
+                if(kstrlen(st->fm_input)>0) fs_write_file(st->fm_input,"",0);
+            } else {
+                if(st->fm_sel>=0&&st->fm_sel<st->fm_count&&kstrlen(st->fm_input)>0)
+                    fs_rename(st->fm_names[st->fm_sel],st->fm_input);
+            }
+            st->fm_mode=FM_MODE_LIST; st->fm_count=-1; st->fm_sel=-1;
+            kmemset(st->fm_input,0,sizeof(st->fm_input));
+        }
+        if(gui_button(cx+70,cy+50,60,16,"Cancel",mx,my,click)){
+            st->fm_mode=FM_MODE_LIST;
+            kmemset(st->fm_input,0,sizeof(st->fm_input));
+        }
+        return;
+    }
 
-        // Determine if this row is selected
-        uint8_t is_sel=(w->st.fm_sel==i);
-        int is_exec=fm_is_executable(w->st.fm_names[i]);
+    // ---- Normal list mode ----
+    gui_fill_rect(cx,cy,cw,ch,RGB(245,245,250));
 
-        uint32_t rbg = is_sel ? RGB(0,120,215) :
-                       (i%2)  ? RGB(245,245,255) : RGB(255,255,255);
+    // === Toolbar ===
+    int32_t tb_h=22;
+    gui_fill_rect(cx,cy,cw,tb_h,RGB(230,230,235));
+    gui_draw_hline(cx,cy+tb_h-1,cw,RGB(180,180,190));
+    // Toolbar buttons
+    if(gui_button(cx+2,cy+3,40,16,"New",mx,my,click)){
+        kmemset(st->fm_input,0,sizeof(st->fm_input));
+        st->fm_mode=FM_MODE_NEW;
+    }
+    if(gui_button(cx+46,cy+3,50,16,"Open",mx,my,click)){
+        if(st->fm_sel>=0&&st->fm_sel<st->fm_count){
+            st->text_len=fs_read_file(st->fm_names[st->fm_sel],st->text,WIN_TEXT_BUF);
+            if(st->text_len<0) st->text_len=0;
+            st->text[st->text_len]=0;
+            st->fm_mode=FM_MODE_EDIT;
+        }
+    }
+    if(gui_button(cx+100,cy+3,52,16,"Rename",mx,my,click)){
+        if(st->fm_sel>=0&&st->fm_sel<st->fm_count){
+            kmemset(st->fm_input,0,sizeof(st->fm_input));
+            kstrcpy(st->fm_input,st->fm_names[st->fm_sel]);
+            st->fm_mode=FM_MODE_RENAME;
+        }
+    }
+    if(gui_button(cx+156,cy+3,48,16,"Delete",mx,my,click)){
+        if(st->fm_sel>=0&&st->fm_sel<st->fm_count)
+            st->fm_mode=FM_MODE_CONFIRM;
+    }
+    // Refresh button right-aligned
+    if(gui_button(cx+cw-52,cy+3,50,16,"Refresh",mx,my,click)){
+        st->fm_count=-1; st->fm_sel=-1;
+    }
+
+    // === Column headers ===
+    int32_t hdr_y=cy+tb_h;
+    int32_t hdr_h=FONT_H+4;
+    gui_fill_rect(cx,hdr_y,cw,hdr_h,RGB(210,210,220));
+    gui_draw_hline(cx,hdr_y+hdr_h-1,cw,RGB(160,160,170));
+    gui_puts(cx+16,hdr_y+2,"Name",RGB(40,40,80),RGB(210,210,220));
+    gui_puts(cx+cw-52,hdr_y+2,"Size",RGB(40,40,80),RGB(210,210,220));
+
+    // Load directory if needed
+    if(st->fm_count<0){
+        st->fm_count=fs_list(st->fm_names,FM_MAX);
+        for(int32_t i=0;i<st->fm_count;i++)
+            st->fm_sizes[i]=fs_size(st->fm_names[i]);
+        st->fm_sel=-1;
+    }
+
+    int32_t list_y=hdr_y+hdr_h;
+    int32_t list_h=ch-tb_h-hdr_h-FONT_H-6;
+    int32_t ty=list_y+2-st->scroll_y;
+    int32_t row_h=FONT_H+5;
+    char sb[16];
+
+    for(int32_t i=0;i<st->fm_count;i++,ty+=row_h){
+        if(ty+row_h<list_y) continue;
+        if(ty>list_y+list_h) break;
+
+        uint8_t is_sel=(st->fm_sel==i);
+        int is_exec=fm_is_executable(st->fm_names[i]);
+
+        uint32_t rbg = is_sel ? RGB(50,120,200) :
+                       (i%2)  ? RGB(248,248,252) : RGB(255,255,255);
         uint32_t tfg = is_sel ? RGB(255,255,255) : COL_TEXT;
-        uint32_t sfg = is_sel ? RGB(220,220,220) : RGB(80,80,80);
+        uint32_t sfg = is_sel ? RGB(200,230,255) : RGB(100,100,120);
+
+        gui_fill_rect(cx, ty, cw, row_h-1, rbg);
+
+        // File type icon char: green > for .os32, folder @ for dirs, doc char otherwise
         uint32_t ifg = is_sel ? RGB(255,255,180) :
-                       is_exec ? RGB(0,160,40)  : RGB(200,200,0);
-
-        gui_fill_rect(cx, ty, cw, FONT_H+2, rbg);
-
-        // Icon: green '>' for .os32 executables, gold '*' for other files
+                       is_exec ? RGB(0,160,40) : RGB(60,120,200);
         gui_putc(cx+3, ty+1, is_exec ? '>' : '*', ifg, rbg);
-        gui_puts(cx+14, ty+1, w->st.fm_names[i], tfg, rbg);
+        gui_puts(cx+14, ty+1, st->fm_names[i], tfg, rbg);
 
-        // File size (right-aligned)
-        kutoa(w->st.fm_sizes[i],sb,10); kstrcat(sb,"B");
+        // File size right-aligned
+        kutoa(st->fm_sizes[i],sb,10); kstrcat(sb," B");
         int32_t sw=(int32_t)kstrlen(sb)*FONT_W;
         gui_puts(cx+cw-sw-4, ty+1, sb, sfg, rbg);
 
-        // Hit-test: was this row clicked?
-        if(click && mx>=cx && mx<cx+cw && my>=ty && my<ty+FONT_H+2){
-            uint32_t now=g_tick;
-            if(w->st.fm_sel==i && (now - w->st.fm_last_click) < FM_DBLCLICK_MS){
-                // ---- Double-click ----
+        // Hit test for click/double-click
+        if(click && mx>=cx && mx<cx+cw && my>=ty && my<ty+row_h){
+            uint32_t now=get_ticks();
+            if(st->fm_sel==i && (now - st->fm_last_click) < FM_DBLCLICK_MS){
+                // Double-click: open/run
                 if(is_exec){
-                    // Step 1–7: kernel loads OS32 header, allocs memory,
-                    // runs appMain(), cleans up on exit.
-                    kernel_exec_os32(w->st.fm_names[i]);
-                    // After exec returns, force a directory refresh
-                    w->st.fm_count=-1;
+                    kernel_exec_os32(st->fm_names[i]);
+                    st->fm_count=-1;
+                } else {
+                    // Open in text editor
+                    st->text_len=fs_read_file(st->fm_names[i],st->text,WIN_TEXT_BUF);
+                    if(st->text_len<0) st->text_len=0;
+                    st->text[st->text_len]=0;
+                    st->fm_mode=FM_MODE_EDIT;
                 }
-                w->st.fm_sel=-1;
-                w->st.fm_last_click=0;
+                st->fm_sel=-1; st->fm_last_click=0;
             } else {
-                // ---- Single-click: select ----
-                w->st.fm_sel=i;
-                w->st.fm_last_click=now;
+                st->fm_sel=i; st->fm_last_click=now;
             }
         }
     }
 
-    if(w->st.fm_count==0)
-        gui_puts(cx+8,cy+FONT_H+28,"(no files)",RGB(128,128,128),RGB(255,255,255));
+    if(st->fm_count==0)
+        gui_puts(cx+8,list_y+8,"(empty — no files on disk)",RGB(128,128,140),RGB(245,245,250));
 
-    // Status bar hint
-    gui_fill_rect(cx, cy+ch-FONT_H-4, cw, FONT_H+4, COL_WIN_BG);
-    gui_draw_hline(cx, cy+ch-FONT_H-5, cw, COL_BORDER_DARK);
-    if(w->st.fm_sel>=0 && w->st.fm_sel<w->st.fm_count){
-        int is_exec=fm_is_executable(w->st.fm_names[w->st.fm_sel]);
-        gui_puts(cx+4, cy+ch-FONT_H-2,
-                 is_exec ? "Double-click to run" : "Double-click to open",
-                 COL_TEXT, COL_WIN_BG);
-    } else {
-        gui_puts(cx+4, cy+ch-FONT_H-2, "Click a file to select",
-                 RGB(120,120,120), COL_WIN_BG);
+    // === Status bar ===
+    int32_t sb_y=cy+ch-FONT_H-5;
+    gui_fill_rect(cx, sb_y, cw, FONT_H+5, RGB(230,230,235));
+    gui_draw_hline(cx, sb_y, cw, RGB(180,180,190));
+    char sbuf[80]; kitoa(st->fm_count,sbuf,10); kstrcat(sbuf," files");
+    if(st->fm_sel>=0&&st->fm_sel<st->fm_count){
+        kstrcat(sbuf,"   Selected: "); kstrncat(sbuf,st->fm_names[st->fm_sel],30);
     }
-    (void)ch;
+    gui_puts(cx+4, sb_y+2, sbuf, RGB(60,60,80), RGB(230,230,235));
+    (void)list_h;
 }
 
 // --- Hex Viewer ---
@@ -2161,6 +2438,99 @@ static void render_about(Window *w, int32_t mx, int32_t my, uint8_t click){
     (void)ch;
 }
 
+// --- Settings ---
+// Theme preview swatch colors
+static const uint32_t g_theme_preview_desktop[THEME_COUNT] = {
+    RGB(30,87,153),     // Modern: blue
+    RGB(0,128,128),     // Classic: teal
+};
+static const uint32_t g_theme_preview_taskbar[THEME_COUNT] = {
+    RGB(42,42,42),      // Modern: dark
+    RGB(192,192,192),   // Classic: grey
+};
+static const uint32_t g_theme_preview_title[THEME_COUNT] = {
+    RGB(50,120,200),    // Modern: blue
+    RGB(0,0,128),       // Classic: navy
+};
+static const char *g_theme_names[THEME_COUNT] = {
+    "Modern  (Dark Panel)",
+    "Classic  (Grey Panel)",
+};
+
+static void render_settings(Window *w, int32_t mx, int32_t my, uint8_t click) {
+    int32_t cx=win_ca_x(w), cy=win_ca_y(w), cw=win_ca_w(w), ch=win_ca_h(w);
+    gui_fill_rect(cx, cy, cw, ch, COL_WIN_BG);
+
+    // Header
+    gui_fill_rect(cx, cy, cw, FONT_H+8, COL_WIN_TITLE_ACT);
+    gui_puts(cx+6, cy+4, "Eclipse32  Settings", COL_WIN_TITLE_TXT, COL_WIN_TITLE_ACT);
+
+    int32_t ty = cy + FONT_H + 14;
+    gui_puts(cx+6, ty, "Theme", COL_TEXT, COL_WIN_BG);
+    ty += FONT_H + 4;
+    gui_draw_hline(cx+4, ty, cw-8, COL_BORDER_DARK);
+    ty += 6;
+
+    // Theme cards — one per theme
+    for (int t = 0; t < THEME_COUNT; t++) {
+        int32_t card_x = cx + 8;
+        int32_t card_w = cw - 16;
+        int32_t card_h = 64;
+        uint8_t is_sel = (g_theme == t);
+
+        // Card border (highlight if selected)
+        uint32_t border_col = is_sel ? COL_WIN_TITLE_ACT : COL_BORDER_DARK;
+        gui_fill_rect(card_x-1, ty-1, card_w+2, card_h+2, border_col);
+        gui_fill_rect(card_x, ty, card_w, card_h, COL_WIN_BG);
+
+        // ── Mini desktop preview ──
+        int32_t prev_x = card_x + 6;
+        int32_t prev_y = ty + 6;
+        int32_t prev_w = 90;
+        int32_t prev_h = 52;
+
+        // Desktop area
+        uint32_t pdt = g_theme_preview_desktop[t];
+        gui_fill_rect(prev_x, prev_y, prev_w, prev_h, pdt);
+        gui_draw_rect_border(prev_x, prev_y, prev_w, prev_h, RGB(60,60,60), RGB(60,60,60));
+
+        // Taskbar position: top for Modern, bottom for Classic
+        int32_t tb_y2 = (t == THEME_CLASSIC)
+                      ? (prev_y + prev_h - 7)
+                      : (prev_y);
+        gui_fill_rect(prev_x, tb_y2, prev_w, 7, g_theme_preview_taskbar[t]);
+
+        // Mini window inside preview
+        int32_t mw_x = prev_x + 20;
+        int32_t mw_y = (t == THEME_CLASSIC) ? (prev_y + 10) : (prev_y + 10);
+        int32_t mw_w = 48, mw_h = 28;
+        gui_fill_rect(mw_x, mw_y, mw_w, mw_h, RGB(210,210,210));
+        gui_fill_rect(mw_x, mw_y, mw_w, 6, g_theme_preview_title[t]);
+        gui_draw_rect_border(mw_x, mw_y, mw_w, mw_h, RGB(80,80,80), RGB(80,80,80));
+
+        // ── Labels ──
+        int32_t lx = prev_x + prev_w + 10;
+        gui_puts(lx, ty+8,  g_theme_names[t], COL_TEXT, COL_WIN_BG);
+        if (is_sel) {
+            gui_fill_rect(lx, ty+20, 50, FONT_H+2, RGB(50,180,50));
+            gui_puts(lx+4, ty+21, "Active", RGB(255,255,255), RGB(50,180,50));
+        } else {
+            if (gui_button(lx, ty+20, 80, FONT_H+4, "Apply", mx, my, click)) {
+                apply_theme(t);
+            }
+        }
+
+        ty += card_h + 8;
+    }
+
+    // Divider + info
+    ty += 4;
+    gui_draw_hline(cx+4, ty, cw-8, COL_BORDER_DARK);
+    ty += 6;
+    gui_puts(cx+6, ty, "Theme applies instantly.", RGB(100,100,100), COL_WIN_BG);
+    (void)ch;
+}
+
 // --- Calendar ---
 static void render_calendar(Window *w, int32_t mx, int32_t my, uint8_t click){
     int32_t cx=win_ca_x(w),cy=win_ca_y(w),cw=win_ca_w(w),ch=win_ca_h(w);
@@ -2225,6 +2595,7 @@ static void render_app(Window *w, int32_t mx, int32_t my, uint8_t click, uint8_t
     case APP_TERMINAL:    render_terminal(w,mx,my,click,active); break;
     case APP_LOGVIEWER:   render_logviewer(w,mx,my,click);  break;
     case APP_ABOUT:       render_about(w,mx,my,click);      break;
+    case APP_SETTINGS:    render_settings(w,mx,my,click);   break;
     default: {
         int32_t cx=win_ca_x(w),cy=win_ca_y(w),cw=win_ca_w(w),ch=win_ca_h(w);
         gui_fill_rect(cx,cy,cw,ch,COL_WIN_BG);
@@ -2236,90 +2607,134 @@ static void render_app(Window *w, int32_t mx, int32_t my, uint8_t click, uint8_t
 // ============================================================
 // Start Menu
 // ============================================================
-#define SM_X   2
-#define SM_Y_BASE  (SCREEN_H - TASKBAR_H)
-// Two-column layout
+// ============================================================
+// Start Menu — drops DOWN from top panel (Modern) or UP from bottom bar (Classic)
+// ============================================================
+#define SM_X        2
 #define SM_COL_ROWS  18
 #define SM_COL_W     MENU_W
-#define SM_TOT_W     (SM_COL_W*2+2)
-#define SM_H         (SM_COL_ROWS*MENU_ITEM_H+4)
-#define SM_Y         (SM_Y_BASE - SM_H)
+#define SM_TOT_W     (SM_COL_W*2+4)
+#define SM_H         (SM_COL_ROWS*MENU_ITEM_H+6)
+// Position computed at draw time based on g_theme
 
 static void draw_startmenu(int32_t mx, int32_t my) {
+    // Classic: pop UP from bottom bar. Modern: drop DOWN from top panel.
+    int32_t sm_y = (g_theme == THEME_CLASSIC)
+                 ? (SCREEN_H - TASKBAR_H - SM_H)
+                 : TASKBAR_H;
+
     // Shadow
-    gui_fill_rect(SM_X+3, SM_Y+3, SM_TOT_W, SM_H, RGB(64,64,64));
-    // Background
-    gui_fill_rect(SM_X, SM_Y, SM_TOT_W, SM_H, COL_WIN_BG);
-    gui_draw_3d_box(SM_X, SM_Y, SM_TOT_W, SM_H, 1);
-    // Left stripe
-    gui_fill_rect(SM_X, SM_Y, 16, SM_H, RGB(0,0,128));
+    gui_fill_rect(SM_X+4, sm_y+4, SM_TOT_W, SM_H, RGB(0,0,0));
+    // Menu background
+    gui_fill_rect(SM_X, sm_y, SM_TOT_W, SM_H, COL_MENU_BG);
+    gui_draw_rect_border(SM_X, sm_y, SM_TOT_W, SM_H, RGB(90,90,90), RGB(30,30,30));
+    // Left accent stripe
+    uint32_t stripe_col = (g_theme == THEME_CLASSIC) ? RGB(0,0,128) : RGB(50,120,200);
+    gui_fill_rect(SM_X, sm_y, 4, SM_H, stripe_col);
 
     g_menu_hover = -1;
     for (int32_t i = 0; i < N_MENU_ITEMS; i++) {
         int32_t col = i / SM_COL_ROWS;
         int32_t row = i % SM_COL_ROWS;
-        int32_t ix = SM_X + 16 + col * SM_COL_W;
-        int32_t iy = SM_Y + 2 + row * MENU_ITEM_H;
+        int32_t ix = SM_X + 6 + col * SM_COL_W;
+        int32_t iy = sm_y + 3 + row * MENU_ITEM_H;
 
         if (kstrcmp(g_menu_items[i].label, "---") == 0) {
-            gui_draw_hline(ix+2, iy+5, SM_COL_W-4, COL_BORDER_DARK);
+            gui_draw_hline(ix+2, iy+5, SM_COL_W-6, COL_MENU_DIV);
             continue;
         }
-        uint8_t hover = pt_in(mx, my, ix, iy, SM_COL_W, MENU_ITEM_H);
+        uint8_t hover = pt_in(mx, my, ix, iy, SM_COL_W-2, MENU_ITEM_H);
         if (hover) {
-            gui_fill_rect(ix, iy, SM_COL_W, MENU_ITEM_H, COL_MENU_SEL);
-            gui_puts(ix+4, iy+2, g_menu_items[i].label, COL_MENU_SEL_TXT, COL_MENU_SEL);
+            gui_fill_rect(ix, iy, SM_COL_W-2, MENU_ITEM_H, COL_MENU_SEL);
+            gui_puts(ix+6, iy+2, g_menu_items[i].label, COL_MENU_SEL_TXT, COL_MENU_SEL);
             g_menu_hover = i;
         } else {
-            gui_puts(ix+4, iy+2, g_menu_items[i].label, COL_MENU_TXT, COL_WIN_BG);
+            gui_puts(ix+6, iy+2, g_menu_items[i].label, COL_MENU_TXT, COL_MENU_BG);
         }
     }
 }
 
 // ============================================================
-// Taskbar
+// Top Panel / Taskbar  — position and style depend on g_theme
 // ============================================================
 static void draw_taskbar(int32_t mx, int32_t my, uint8_t click) {
-    int32_t ty = SCREEN_H - TASKBAR_H;
+    int32_t ty = TASKBAR_Y_FOR(g_theme);  // top or bottom depending on theme
+
     gui_fill_rect(0, ty, SCREEN_W, TASKBAR_H, COL_TASKBAR_BG);
-    gui_draw_3d_box(0, ty, SCREEN_W, TASKBAR_H, 1);
 
-    // Start button
-    uint8_t sm_hover = pt_in(mx, my, 2, ty+2, 54, TASKBAR_H-4);
-    gui_fill_rect(2, ty+2, 54, TASKBAR_H-4, COL_BUTTON_FACE);
-    gui_draw_3d_box(2, ty+2, 54, TASKBAR_H-4, !(g_startmenu));
-    gui_puts(8, ty+8, "Start", COL_BUTTON_TXT, COL_BUTTON_FACE);
+    if (g_theme == THEME_CLASSIC) {
+        // Classic: raised 3D border
+        gui_draw_3d_box(0, ty, SCREEN_W, TASKBAR_H, 1);
+    } else {
+        // Modern: thin separator line
+        int32_t sep_y = (ty == 0) ? ty + TASKBAR_H - 1 : ty;
+        gui_draw_hline(0, sep_y, SCREEN_W, RGB(60,60,60));
+    }
+
+    // === Applications / Start button ===
+    uint8_t sm_hover = pt_in(mx, my, 2, ty+2, 70, TASKBAR_H-4);
+    if (g_theme == THEME_CLASSIC) {
+        // Classic: raised Start button
+        uint32_t sbg = COL_BUTTON_FACE;
+        gui_fill_rect(2, ty+2, 54, TASKBAR_H-4, sbg);
+        gui_draw_3d_box(2, ty+2, 54, TASKBAR_H-4, !g_startmenu);
+        gui_puts(8, ty+(TASKBAR_H-FONT_H)/2, "Start", COL_BUTTON_TXT, sbg);
+    } else {
+        // Modern: flat button with "E Eclipse" logo
+        uint32_t sbg = g_startmenu ? RGB(70,140,220)
+                                   : (sm_hover ? RGB(65,65,65) : RGB(50,50,50));
+        gui_fill_rect(2, ty+2, 70, TASKBAR_H-4, sbg);
+        gui_draw_rect_border(2, ty+2, 70, TASKBAR_H-4, RGB(80,80,80), RGB(35,35,35));
+        gui_fill_rect(5, ty+5, 12, TASKBAR_H-10, RGB(50,120,200));
+        gui_puts(7, ty+7, "E", COL_WHITE, RGB(50,120,200));
+        gui_puts(21, ty+9, "Eclipse", RGB(220,220,220), sbg);
+    }
     if (click && sm_hover) g_startmenu = !g_startmenu;
-    (void)sm_hover;
 
-    // Window buttons (up to 8 visible)
-    int32_t bx = 60;
-    for (int32_t i = 0; i < g_nwins && bx < SCREEN_W - 80; i++) {
+    // === Window buttons ===
+    int32_t bx = (g_theme == THEME_CLASSIC) ? 60 : 78;
+    for (int32_t i = 0; i < g_nwins && bx < SCREEN_W - 100; i++) {
         Window *w = &g_wins[i];
         if (!(w->flags & WIN_FLAG_VISIBLE)) continue;
-        int32_t bw = 100;
+        int32_t bw = 110;
         uint8_t active = (i == g_front);
         uint8_t bhover = pt_in(mx,my,bx,ty+3,bw,TASKBAR_H-6);
-        gui_fill_rect(bx, ty+3, bw, TASKBAR_H-6, COL_BUTTON_FACE);
-        gui_draw_3d_box(bx, ty+3, bw, TASKBAR_H-6, !active);
+        uint32_t wbg;
+        if (g_theme == THEME_CLASSIC) {
+            wbg = COL_BUTTON_FACE;
+            gui_fill_rect(bx, ty+3, bw, TASKBAR_H-6, wbg);
+            gui_draw_3d_box(bx, ty+3, bw, TASKBAR_H-6, !active);
+        } else {
+            wbg = active ? RGB(70,140,220) : (bhover ? RGB(65,65,65) : RGB(50,50,50));
+            gui_fill_rect(bx, ty+3, bw, TASKBAR_H-6, wbg);
+            if (active) gui_draw_hline(bx, ty+TASKBAR_H-4, bw, RGB(120,200,255));
+        }
         if(click && bhover) { bring_front(i); g_startmenu=0; }
-        char tb[12]; kstrncpy(tb, w->title, 11); tb[11]=0;
-        gui_puts_clip(bx+3, ty+8, tb, COL_BUTTON_TXT, COL_BUTTON_FACE,
+        char tb[14]; kstrncpy(tb, w->title, 13); tb[13]=0;
+        uint32_t txt_col = (g_theme == THEME_CLASSIC) ? COL_BUTTON_TXT
+                         : (active ? COL_WHITE : RGB(200,200,200));
+        gui_puts_clip(bx+4, ty+(TASKBAR_H-FONT_H)/2, tb, txt_col, wbg,
                       bx+2, ty+3, bw-4, TASKBAR_H-6);
         bx += bw + 2;
     }
 
-    // Clock
+    // === Clock ===
     uint32_t ticks=get_ticks(), secs=ticks/100;
     uint32_t mins=(secs/60)%60, hrs=(secs/3600)%24;
     char tc[9];
-    tc[0]='0'+(hrs/10);tc[1]='0'+(hrs%10);tc[2]=':';
-    tc[3]='0'+(mins/10);tc[4]='0'+(mins%10);tc[5]=':';
-    uint32_t s=secs%60; tc[6]='0'+(s/10);tc[7]='0'+(s%10);tc[8]=0;
-    int32_t cw=SCREEN_W-70;
-    gui_fill_rect(cw-2,ty+3,68,TASKBAR_H-6,COL_BUTTON_FACE);
-    gui_draw_3d_box(cw-2,ty+3,68,TASKBAR_H-6,0);
-    gui_puts(cw+1,ty+8,tc,COL_BUTTON_TXT,COL_BUTTON_FACE);
+    tc[0]='0'+(hrs/10); tc[1]='0'+(hrs%10); tc[2]=':';
+    tc[3]='0'+(mins/10); tc[4]='0'+(mins%10); tc[5]=':';
+    uint32_t s2=secs%60; tc[6]='0'+(s2/10); tc[7]='0'+(s2%10); tc[8]=0;
+    int32_t clk_x = SCREEN_W - 72;
+    if (g_theme == THEME_CLASSIC) {
+        gui_fill_rect(clk_x, ty+3, 70, TASKBAR_H-6, COL_BUTTON_FACE);
+        gui_draw_3d_box(clk_x, ty+3, 70, TASKBAR_H-6, 0);
+        gui_puts(clk_x+4, ty+(TASKBAR_H-FONT_H)/2, tc, COL_BUTTON_TXT, COL_BUTTON_FACE);
+    } else {
+        gui_fill_rect(clk_x, ty+3, 70, TASKBAR_H-6, RGB(38,38,38));
+        gui_draw_rect_border(clk_x, ty+3, 70, TASKBAR_H-6, RGB(60,60,60), RGB(30,30,30));
+        gui_puts(clk_x+4, ty+(TASKBAR_H-FONT_H)/2, tc, RGB(200,220,255), RGB(38,38,38));
+    }
 }
 
 // ============================================================
@@ -2370,6 +2785,9 @@ void gui_run(void) {
         return;
     }
 
+    // Apply default theme before first frame
+    apply_theme(THEME_MODERN);
+
     uint8_t prev_btn = 0;
     uint8_t dragging = 0;
     int32_t drag_idx = -1, drag_ox = 0, drag_oy = 0;
@@ -2406,9 +2824,9 @@ void gui_pump(void) {
             dw->x = mx - drag_ox;
             dw->y = my - drag_oy;
             if(dw->x<0)dw->x=0;
-            if(dw->y<0)dw->y=0;
+            if(dw->y < DESKTOP_TOP_FOR(g_theme)) dw->y = DESKTOP_TOP_FOR(g_theme);
             if(dw->x+dw->w>SCREEN_W)   dw->x=SCREEN_W-dw->w;
-            if(dw->y+dw->h>SCREEN_H-TASKBAR_H) dw->y=SCREEN_H-TASKBAR_H-dw->h;
+            if(dw->y+dw->h>SCREEN_H) dw->y=SCREEN_H-dw->h;
         }
         if (release) { dragging=0; drag_idx=-1; }
 
@@ -2416,11 +2834,14 @@ void gui_pump(void) {
         if (click) {
             // Close start menu if click outside it
             if (g_startmenu) {
+                int32_t sm_y_rt = (g_theme == THEME_CLASSIC)
+                                ? (SCREEN_H - TASKBAR_H - SM_H)
+                                : TASKBAR_H;
                 if (g_menu_hover >= 0 && g_menu_items[g_menu_hover].app != APP_NONE) {
                     open_window(g_menu_items[g_menu_hover].app);
                     g_startmenu = 0;
-                } else if (!pt_in(mx,my,SM_X,SM_Y,SM_TOT_W,SM_H) &&
-                           !pt_in(mx,my,2,SCREEN_H-TASKBAR_H+2,54,TASKBAR_H-4)) {
+                } else if (!pt_in(mx,my,SM_X,sm_y_rt,SM_TOT_W,SM_H) &&
+                           !pt_in(mx,my,2,TASKBAR_Y_FOR(g_theme)+2,70,TASKBAR_H-4)) {
                     g_startmenu = 0;
                 }
                 goto after_click;
@@ -2428,7 +2849,7 @@ void gui_pump(void) {
 
             // Taskbar handled inside draw_taskbar above (we pass click through)
 
-            // Windows (front to back)
+            // App windows (front to back)
             for (int32_t i = g_nwins-1; i >= 0; i--) {
                 Window *w = &g_wins[i];
                 if (!(w->flags & WIN_FLAG_VISIBLE)) continue;
@@ -2469,13 +2890,25 @@ void gui_pump(void) {
         // RENDER  – draw to back buffer, then blit once (no flicker)
         // ============================================================
 
-        // 1. Desktop background
-        gui_fill_rect(0, 0, SCREEN_W, SCREEN_H-TASKBAR_H, COL_DESKTOP);
+        // 1. Desktop background — theme-aware
+        int32_t desk_top = DESKTOP_TOP_FOR(g_theme);
+        int32_t desk_h   = SCREEN_H - TASKBAR_H;
+        if (g_theme == THEME_CLASSIC) {
+            gui_fill_rect(0, desk_top, SCREEN_W, desk_h, COL_DESKTOP);
+        } else {
+            for(int32_t row=0; row<desk_h; row++){
+                uint32_t t=(uint32_t)row*255/desk_h;
+                uint32_t r2=20+t*10/255; if(r2>50)r2=50;
+                uint32_t g2=60+t*30/255; if(g2>100)g2=100;
+                uint32_t b2=120+t*40/255; if(b2>180)b2=180;
+                gui_draw_hline(0, desk_top+row, SCREEN_W, RGB(r2,g2,b2));
+            }
+        }
 
         // 2. Desktop icons
         for (int32_t i=0;i<N_ICONS;i++) draw_icon(&g_icons[i]);
 
-        // 3. Windows back-to-front
+        // 3. App windows back-to-front
         for (int32_t i=0; i<g_nwins; i++) {
             Window *w=&g_wins[i];
             if(!(w->flags & WIN_FLAG_VISIBLE)) continue;
