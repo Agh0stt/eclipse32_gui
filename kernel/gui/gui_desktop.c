@@ -664,7 +664,7 @@ static DesktopIcon g_icons[] = {
 
 static uint32_t g_last_click_tick = 0;
 static int32_t  g_last_click_icon = -1;
-#define DBLCLICK_MS  40   // ticks (100Hz → 400ms)
+#define DBLCLICK_MS  500   // 500ms double-click window (pit_ticks = ms at 1000Hz)
 
 // ============================================================
 // Window helpers
