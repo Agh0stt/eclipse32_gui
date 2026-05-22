@@ -13,7 +13,9 @@
 // ============================================================
 #define THEME_MODERN   0   // dark panel, blue gradient desktop
 #define THEME_CLASSIC  1   // grey taskbar at bottom, teal desktop
-#define THEME_COUNT    2
+#define THEME_MIDNIGHT 2   // deep navy, silver accents
+#define THEME_SUNSET   3   // warm purple/orange gradient
+#define THEME_COUNT    4
 
 // ============================================================
 // Runtime color variables — set by apply_theme(), used everywhere

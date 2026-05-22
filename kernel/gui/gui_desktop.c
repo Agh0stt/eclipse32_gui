@@ -59,6 +59,48 @@ void apply_theme(int theme_id) {
         COL_MENU_SEL_TXT  = RGB(255, 255, 255);
         COL_MENU_TXT      = RGB(0, 0, 0);
         COL_MENU_DIV      = RGB(128, 128, 128);
+    } else if (theme_id == THEME_MIDNIGHT) {
+        // ── Midnight: deep navy desktop, silver/ice accents ──
+        COL_DESKTOP       = RGB(8,  12,  40);
+        COL_WIN_BG        = RGB(18, 22,  54);
+        COL_WIN_TITLE_ACT = RGB(60, 80, 160);
+        COL_WIN_TITLE_INA = RGB(35, 40,  80);
+        COL_WIN_TITLE_TXT = RGB(200, 220, 255);
+        COL_BORDER_LIGHT  = RGB(80, 100, 180);
+        COL_BORDER_DARK   = RGB(10,  14,  40);
+        COL_BUTTON_FACE   = RGB(30,  36,  80);
+        COL_BUTTON_TXT    = RGB(200, 220, 255);
+        COL_TEXT          = RGB(200, 220, 255);
+        COL_ICON_LABEL    = RGB(200, 220, 255);
+        COL_ICON_SEL_BG   = RGB(60,  80, 160);
+        COL_TASKBAR_BG    = RGB(10,  14,  35);
+        COL_TASKBAR_TXT   = RGB(180, 200, 255);
+        COL_MENU_BG       = RGB(14,  18,  50);
+        COL_MENU_SEL      = RGB(60,  80, 160);
+        COL_MENU_SEL_TXT  = RGB(220, 235, 255);
+        COL_MENU_TXT      = RGB(180, 200, 255);
+        COL_MENU_DIV      = RGB(40,  50, 100);
+    } else if (theme_id == THEME_SUNSET) {
+        // ── Sunset: warm purple/orange, deep dusk feel ──
+        COL_DESKTOP       = RGB(80,  20,  60);
+        COL_WIN_BG        = RGB(40,  18,  35);
+        COL_WIN_TITLE_ACT = RGB(200, 80,  40);
+        COL_WIN_TITLE_INA = RGB(100, 40,  60);
+        COL_WIN_TITLE_TXT = RGB(255, 230, 200);
+        COL_BORDER_LIGHT  = RGB(220, 120,  60);
+        COL_BORDER_DARK   = RGB(40,  10,  20);
+        COL_BUTTON_FACE   = RGB(100, 40,  50);
+        COL_BUTTON_TXT    = RGB(255, 220, 180);
+        COL_TEXT          = RGB(255, 220, 180);
+        COL_ICON_LABEL    = RGB(255, 230, 200);
+        COL_ICON_SEL_BG   = RGB(180, 60,  30);
+        COL_TASKBAR_BG    = RGB(25,  10,  20);
+        COL_TASKBAR_TXT   = RGB(255, 200, 150);
+        COL_MENU_BG       = RGB(35,  12,  25);
+        COL_MENU_SEL      = RGB(200, 80,  40);
+        COL_MENU_SEL_TXT  = RGB(255, 235, 200);
+        COL_MENU_TXT      = RGB(240, 190, 140);
+        COL_MENU_DIV      = RGB(100, 40,  40);
     } else {
         // ── Modern: dark panel, blue accent ──
         COL_DESKTOP       = RGB(30, 87, 153);
@@ -135,17 +177,31 @@ static void settings_load(void) {
 
 // ---- Draw desktop background using current wallpaper ----
 static void draw_desktop_bg(int32_t desk_top, int32_t desk_h) {
-    if (g_wallpaper == WALLPAPER_GRADIENT) {
-        // Gradient (original Modern look, also used for Classic)
-        for (int32_t row = 0; row < desk_h; row++) {
-            uint32_t t = (uint32_t)row * 255 / (uint32_t)desk_h;
-            uint32_t r2 = 20 + t * 10 / 255; if (r2 > 50) r2 = 50;
-            uint32_t g2 = 60 + t * 30 / 255; if (g2 > 100) g2 = 100;
-            uint32_t b2 = 120 + t * 40 / 255; if (b2 > 180) b2 = 180;
-            gui_draw_hline(0, desk_top + row, SCREEN_W, RGB(r2, g2, b2));
-        }
-    } else {
+    if (g_wallpaper != WALLPAPER_GRADIENT) {
         gui_fill_rect(0, desk_top, SCREEN_W, desk_h, g_wallpaper_colors[g_wallpaper]);
+        return;
+    }
+    // Gradient — style depends on theme
+    for (int32_t row = 0; row < desk_h; row++) {
+        uint32_t t = (uint32_t)row * 255 / (uint32_t)desk_h;
+        uint32_t r2, g2, b2;
+        if (g_theme == THEME_MIDNIGHT) {
+            // Deep navy → slightly lighter navy
+            r2 = 4  + t *  8 / 255;
+            g2 = 8  + t * 18 / 255;
+            b2 = 30 + t * 50 / 255;
+        } else if (g_theme == THEME_SUNSET) {
+            // Deep purple → warm orange at horizon
+            r2 = 40  + t * 120 / 255;
+            g2 = 5   + t *  40 / 255;
+            b2 = 50  - t *  40 / 255; if ((int32_t)b2 < 5) b2 = 5;
+        } else {
+            // Modern / Classic default blue gradient
+            r2 = 20 + t * 10 / 255; if (r2 > 50) r2 = 50;
+            g2 = 60 + t * 30 / 255; if (g2 > 100) g2 = 100;
+            b2 = 120 + t * 40 / 255; if (b2 > 180) b2 = 180;
+        }
+        gui_draw_hline(0, desk_top + row, SCREEN_W, RGB(r2, g2, b2));
     }
 }
 
@@ -730,7 +786,7 @@ static int32_t open_window(AppType app) {
             "  Games, tools, utilities\n");
         w->st.text_len=(int32_t)kstrlen(w->st.text); break;
     case APP_ABOUT:       kstrcpy(w->title,"About Eclipse32"); w->w=300;w->h=220; break;
-    case APP_SETTINGS:    kstrcpy(w->title,"Settings");        w->w=380;w->h=440; break;
+    case APP_SETTINGS:    kstrcpy(w->title,"Settings");        w->w=380;w->h=560; break;
     default:              kstrcpy(w->title,"Window");        w->w=320;w->h=240; break;
     }
 
@@ -2609,18 +2665,26 @@ static void render_about(Window *w, int32_t mx, int32_t my, uint8_t click){
 static const uint32_t g_theme_preview_desktop[THEME_COUNT] = {
     RGB(30,87,153),     // Modern: blue
     RGB(0,128,128),     // Classic: teal
+    RGB(8,12,40),       // Midnight: deep navy
+    RGB(80,20,60),      // Sunset: deep purple
 };
 static const uint32_t g_theme_preview_taskbar[THEME_COUNT] = {
     RGB(42,42,42),      // Modern: dark
     RGB(192,192,192),   // Classic: grey
+    RGB(10,14,35),      // Midnight: near-black navy
+    RGB(25,10,20),      // Sunset: near-black purple
 };
 static const uint32_t g_theme_preview_title[THEME_COUNT] = {
     RGB(50,120,200),    // Modern: blue
     RGB(0,0,128),       // Classic: navy
+    RGB(60,80,160),     // Midnight: ice blue
+    RGB(200,80,40),     // Sunset: orange
 };
 static const char *g_theme_names[THEME_COUNT] = {
-    "Modern  (Dark Panel)",
+    "Modern   (Dark Panel)",
     "Classic  (Grey Panel)",
+    "Midnight (Deep Navy)",
+    "Sunset   (Warm Dusk)",
 };
 
 static void render_settings(Window *w, int32_t mx, int32_t my, uint8_t click) {
@@ -2834,7 +2898,10 @@ static void draw_startmenu(int32_t mx, int32_t my) {
     gui_fill_rect(SM_X, sm_y, SM_TOT_W, SM_H, COL_MENU_BG);
     gui_draw_rect_border(SM_X, sm_y, SM_TOT_W, SM_H, RGB(90,90,90), RGB(30,30,30));
     // Left accent stripe
-    uint32_t stripe_col = (g_theme == THEME_CLASSIC) ? RGB(0,0,128) : RGB(50,120,200);
+    uint32_t stripe_col = (g_theme == THEME_CLASSIC)  ? RGB(0,0,128)   :
+                          (g_theme == THEME_MIDNIGHT) ? RGB(60,80,160) :
+                          (g_theme == THEME_SUNSET)   ? RGB(200,80,40) :
+                                                        RGB(50,120,200);
     gui_fill_rect(SM_X, sm_y, 4, SM_H, stripe_col);
 
     g_menu_hover = -1;
