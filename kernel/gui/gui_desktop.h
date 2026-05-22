@@ -121,6 +121,8 @@ typedef struct {
     uint8_t  sw_running;
     // paint
     uint8_t  paint_col_idx;
+    int16_t  paint_prev_x, paint_prev_y;  // last drawn position for line interpolation
+    uint8_t  paint_was_down;              // was mouse down last frame
     // snake
     int8_t   sn_dx, sn_dy;
     uint8_t  sn_len, sn_dead;

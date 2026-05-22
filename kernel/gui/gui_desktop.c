@@ -84,6 +84,141 @@ void apply_theme(int theme_id) {
 }
 
 // ============================================================
+// Wallpaper system
+// ============================================================
+#define WALLPAPER_COUNT  8
+#define WALLPAPER_GRADIENT 0   // special: draw gradient
+static int g_wallpaper = WALLPAPER_GRADIENT;  // default: gradient
+
+// Wallpaper color options (solid colors + gradient)
+static const uint32_t g_wallpaper_colors[WALLPAPER_COUNT] = {
+    0,                          // 0 = gradient (placeholder)
+    RGB(0,  128, 128),          // 1 teal
+    RGB(30,  60, 120),          // 2 navy
+    RGB(60,  20,  80),          // 3 purple
+    RGB(20,  80,  30),          // 4 forest green
+    RGB(100, 40,  10),          // 5 brown/rust
+    RGB(10,  10,  10),          // 6 near-black
+    RGB(80,  80,  80),          // 7 grey
+};
+static const char *g_wallpaper_names[WALLPAPER_COUNT] = {
+    "Gradient",
+    "Teal",
+    "Navy",
+    "Purple",
+    "Forest",
+    "Rust",
+    "Black",
+    "Grey",
+};
+
+// ---- Persist theme + wallpaper to disk ----
+static void settings_save(void) {
+    char buf[8];
+    buf[0] = (char)('0' + g_theme);
+    buf[1] = ' ';
+    buf[2] = (char)('0' + g_wallpaper);
+    buf[3] = '\0';
+    fs_write_file("settings.cfg", buf, 3);
+}
+
+static void settings_load(void) {
+    char buf[16];
+    int r = fs_read_file("settings.cfg", buf, sizeof(buf));
+    if (r >= 3) {
+        int t = buf[0] - '0';
+        int w = buf[2] - '0';
+        if (t >= 0 && t < THEME_COUNT)      { apply_theme(t); }
+        if (w >= 0 && w < WALLPAPER_COUNT)  { g_wallpaper = w; }
+    }
+}
+
+// ---- Draw desktop background using current wallpaper ----
+static void draw_desktop_bg(int32_t desk_top, int32_t desk_h) {
+    if (g_wallpaper == WALLPAPER_GRADIENT) {
+        // Gradient (original Modern look, also used for Classic)
+        for (int32_t row = 0; row < desk_h; row++) {
+            uint32_t t = (uint32_t)row * 255 / (uint32_t)desk_h;
+            uint32_t r2 = 20 + t * 10 / 255; if (r2 > 50) r2 = 50;
+            uint32_t g2 = 60 + t * 30 / 255; if (g2 > 100) g2 = 100;
+            uint32_t b2 = 120 + t * 40 / 255; if (b2 > 180) b2 = 180;
+            gui_draw_hline(0, desk_top + row, SCREEN_W, RGB(r2, g2, b2));
+        }
+    } else {
+        gui_fill_rect(0, desk_top, SCREEN_W, desk_h, g_wallpaper_colors[g_wallpaper]);
+    }
+}
+
+// ============================================================
+// Right-click context menu
+// ============================================================
+// Forward declaration (defined later in file)
+static inline uint8_t pt_in(int32_t px, int32_t py, int32_t rx, int32_t ry, int32_t rw, int32_t rh);
+#define CTX_NONE     0
+#define CTX_DESKTOP  1
+static int   g_ctx_open    = 0;   // which context menu (CTX_*)
+static int32_t g_ctx_x     = 0;
+static int32_t g_ctx_y     = 0;
+
+// Context menu items for desktop
+#define CTX_ITEM_WALLPAPER  0
+#define CTX_ITEM_THEME      1
+#define CTX_ITEM_COUNT      2
+static const char *g_ctx_labels[CTX_ITEM_COUNT] = {
+    "Change Wallpaper",
+    "Change Theme",
+};
+#define CTX_MENU_W  140
+#define CTX_ITEM_H  16
+
+static void draw_context_menu(int32_t mx, int32_t my) {
+    if (!g_ctx_open) return;
+    int32_t mh = CTX_ITEM_COUNT * CTX_ITEM_H + 4;
+    // keep menu on screen
+    int32_t cx = g_ctx_x;
+    int32_t cy = g_ctx_y;
+    if (cx + CTX_MENU_W > SCREEN_W) cx = SCREEN_W - CTX_MENU_W;
+    if (cy + mh > SCREEN_H) cy = SCREEN_H - mh;
+    // shadow
+    gui_fill_rect(cx+3, cy+3, CTX_MENU_W, mh, RGB(0,0,0));
+    // background
+    gui_fill_rect(cx, cy, CTX_MENU_W, mh, COL_MENU_BG);
+    gui_draw_rect_border(cx, cy, CTX_MENU_W, mh, RGB(90,90,90), RGB(30,30,30));
+    for (int i = 0; i < CTX_ITEM_COUNT; i++) {
+        int32_t iy = cy + 2 + i * CTX_ITEM_H;
+        uint8_t hover = pt_in(mx, my, cx, iy, CTX_MENU_W, CTX_ITEM_H);
+        if (hover) {
+            gui_fill_rect(cx+1, iy, CTX_MENU_W-2, CTX_ITEM_H, COL_MENU_SEL);
+            gui_puts(cx+8, iy+4, g_ctx_labels[i], COL_MENU_SEL_TXT, COL_MENU_SEL);
+        } else {
+            gui_puts(cx+8, iy+4, g_ctx_labels[i], COL_MENU_TXT, COL_MENU_BG);
+        }
+    }
+}
+
+// Returns clicked item index (0..CTX_ITEM_COUNT-1) or -1 if not clicked/closed
+static int handle_context_menu_click(int32_t mx, int32_t my) {
+    if (!g_ctx_open) return -1;
+    int32_t mh = CTX_ITEM_COUNT * CTX_ITEM_H + 4;
+    int32_t cx = g_ctx_x;
+    int32_t cy = g_ctx_y;
+    if (cx + CTX_MENU_W > SCREEN_W) cx = SCREEN_W - CTX_MENU_W;
+    if (cy + mh > SCREEN_H) cy = SCREEN_H - mh;
+    if (!pt_in(mx, my, cx, cy, CTX_MENU_W, mh)) {
+        g_ctx_open = 0;
+        return -1;
+    }
+    for (int i = 0; i < CTX_ITEM_COUNT; i++) {
+        int32_t iy = cy + 2 + i * CTX_ITEM_H;
+        if (pt_in(mx, my, cx, iy, CTX_MENU_W, CTX_ITEM_H)) {
+            g_ctx_open = 0;
+            return i;
+        }
+    }
+    return -1;
+}
+
+// ============================================================
 // Compatibility shims — bridge old GUI to new driver APIs
 // ============================================================
 
@@ -595,7 +730,7 @@ static int32_t open_window(AppType app) {
             "  Games, tools, utilities\n");
         w->st.text_len=(int32_t)kstrlen(w->st.text); break;
     case APP_ABOUT:       kstrcpy(w->title,"About Eclipse32"); w->w=300;w->h=220; break;
-    case APP_SETTINGS:    kstrcpy(w->title,"Settings");        w->w=360;w->h=300; break;
+    case APP_SETTINGS:    kstrcpy(w->title,"Settings");        w->w=380;w->h=440; break;
     default:              kstrcpy(w->title,"Window");        w->w=320;w->h=240; break;
     }
 
@@ -1433,27 +1568,53 @@ static const uint32_t paint_palette[]={
 #define PAINT_CELL 14
 #define PAINT_CANVAS_X 4
 #define PAINT_CANVAS_Y 20
+#define PAINT_STRIDE   100   // canvas width = height = 100 pixels
 // Canvas is stored in window's text buffer as raw pixel data (1 byte per pixel = color index)
+// Paint a single pixel (2x2 brush) on the canvas buffer
+static inline void paint_dot(AppState *st, int32_t px, int32_t py) {
+    if(px<0||px>=100||py<0||py>=100) return;
+    st->text[py*PAINT_STRIDE+px]=(char)st->paint_col_idx;
+    if(px+1<100) st->text[py*PAINT_STRIDE+px+1]=(char)st->paint_col_idx;
+    if(py+1<100) st->text[(py+1)*PAINT_STRIDE+px]=(char)st->paint_col_idx;
+    if(px+1<100&&py+1<100) st->text[(py+1)*PAINT_STRIDE+px+1]=(char)st->paint_col_idx;
+}
+
+// Bresenham line from (x0,y0) to (x1,y1)
+static void paint_line(AppState *st, int32_t x0, int32_t y0, int32_t x1, int32_t y1){
+    int32_t dx=x1-x0; if(dx<0)dx=-dx;
+    int32_t dy=y1-y0; if(dy<0)dy=-dy;
+    int32_t sx=(x0<x1)?1:-1, sy=(y0<y1)?1:-1;
+    int32_t err=dx-dy;
+    for(;;){
+        paint_dot(st,x0,y0);
+        if(x0==x1&&y0==y1) break;
+        int32_t e2=err*2;
+        if(e2>-dy){ err-=dy; x0+=sx; }
+        if(e2< dx){ err+=dx; y0+=sy; }
+    }
+}
+
 static void render_paint(Window *w, int32_t mx, int32_t my, uint8_t click){
     int32_t cx=win_ca_x(w),cy=win_ca_y(w),cw=win_ca_w(w),ch=win_ca_h(w);
     int32_t cax=cx+PAINT_CANVAS_X, cay=cy+PAINT_CANVAS_Y;
-    int32_t caw=cw-8, cah=ch-PAINT_CANVAS_Y-4;
-    // init canvas to white
+    // init canvas to white (index 1)
     if(w->st.text_len==0){
-        kmemset(w->st.text,1,WIN_TEXT_BUF);
-        w->st.text_len=WIN_TEXT_BUF;
+        kmemset(w->st.text,1,PAINT_STRIDE*PAINT_STRIDE);
+        w->st.text_len=PAINT_STRIDE*PAINT_STRIDE;
     }
     // Draw canvas
-    int32_t pw=caw, ph=cah;
-    if(pw>WIN_TEXT_BUF) pw=WIN_TEXT_BUF;
-    for(int32_t row=0;row<ph&&row<100;row++){
-        for(int32_t col=0;col<pw&&col<100;col++){
-            uint8_t idx=(uint8_t)w->st.text[row*(pw>100?100:pw)+col];
+    int32_t pw=100, ph=100;
+    // clamp display to available client area
+    int32_t disp_w = cw-8; if(disp_w>pw) disp_w=pw;
+    int32_t disp_h = ch-PAINT_CANVAS_Y-4; if(disp_h>ph) disp_h=ph;
+    for(int32_t row=0;row<disp_h;row++){
+        for(int32_t col=0;col<disp_w;col++){
+            uint8_t idx=(uint8_t)w->st.text[row*PAINT_STRIDE+col];
             if(idx>=PAINT_COLS)idx=1;
             bb_pix(cax+col,cay+row,paint_palette[idx]);
         }
     }
-    gui_draw_rect_border(cax-1,cay-1,pw+2,ph+2,COL_BORDER_DARK,COL_BORDER_LIGHT);
+    gui_draw_rect_border(cax-1,cay-1,disp_w+2,disp_h+2,COL_BORDER_DARK,COL_BORDER_LIGHT);
     // Palette row at top
     for(int i=0;i<PAINT_COLS;i++){
         int32_t px=cx+4+i*PAINT_CELL;
@@ -1462,24 +1623,29 @@ static void render_paint(Window *w, int32_t mx, int32_t my, uint8_t click){
             (i==(int)w->st.paint_col_idx)?COL_BORDER_DARK:RGB(128,128,128),
             (i==(int)w->st.paint_col_idx)?COL_BORDER_LIGHT:RGB(128,128,128));
     }
-    // Select palette color on click
-    if(click&&my>=cy+2&&my<cy+PAINT_CELL){
+    // Select palette color on click in palette row
+    if(click&&my>=cy+2&&my<cy+2+PAINT_CELL){
         for(int i=0;i<PAINT_COLS;i++){
             int32_t px=cx+4+i*PAINT_CELL;
             if(mx>=px&&mx<px+PAINT_CELL) w->st.paint_col_idx=(uint8_t)i;
         }
     }
-    // Paint on canvas
-    if((g_mouse.buttons&1)&&mx>=cax&&mx<cax+pw&&my>=cay&&my<cay+ph){
+    // Paint on canvas — Bresenham from last position for smooth strokes
+    uint8_t is_down = (g_mouse.buttons&1) &&
+                      mx>=cax && mx<cax+disp_w &&
+                      my>=cay && my<cay+disp_h;
+    if(is_down){
         int32_t px=mx-cax, py=my-cay;
-        if(px<100&&py<100){
-            int32_t stride=(pw>100?100:pw);
-            w->st.text[py*stride+px]=(char)w->st.paint_col_idx;
-            // also paint neighbors for thicker brush
-            if(px+1<100) w->st.text[py*stride+px+1]=(char)w->st.paint_col_idx;
-            if(py+1<100) w->st.text[(py+1)*stride+px]=(char)w->st.paint_col_idx;
+        if(w->st.paint_was_down){
+            // interpolate line from previous position
+            paint_line(&w->st, (int32_t)w->st.paint_prev_x, (int32_t)w->st.paint_prev_y, px, py);
+        } else {
+            paint_dot(&w->st, px, py);
         }
+        w->st.paint_prev_x=(int16_t)px;
+        w->st.paint_prev_y=(int16_t)py;
     }
+    w->st.paint_was_down=is_down;
 }
 
 // --- Color Picker ---
@@ -2517,17 +2683,56 @@ static void render_settings(Window *w, int32_t mx, int32_t my, uint8_t click) {
         } else {
             if (gui_button(lx, ty+20, 80, FONT_H+4, "Apply", mx, my, click)) {
                 apply_theme(t);
+                settings_save();
             }
         }
 
         ty += card_h + 8;
     }
 
-    // Divider + info
-    ty += 4;
+    // ── Wallpaper section ──
+    ty += 8;
     gui_draw_hline(cx+4, ty, cw-8, COL_BORDER_DARK);
     ty += 6;
-    gui_puts(cx+6, ty, "Theme applies instantly.", RGB(100,100,100), COL_WIN_BG);
+    gui_puts(cx+6, ty, "Wallpaper", COL_TEXT, COL_WIN_BG);
+    ty += FONT_H + 4;
+
+    // 2-row grid of wallpaper swatches
+    int32_t sw_size = 28;
+    int32_t sw_cols = WALLPAPER_COUNT / 2;
+    for (int w2 = 0; w2 < WALLPAPER_COUNT; w2++) {
+        int32_t col2 = w2 % sw_cols;
+        int32_t row2 = w2 / sw_cols;
+        int32_t sx = cx + 8 + col2 * (sw_size + 4);
+        int32_t sy = ty + row2 * (sw_size + 4);
+        uint32_t swcol = (w2 == WALLPAPER_GRADIENT)
+            ? RGB(40, 90, 160)  // represent gradient
+            : g_wallpaper_colors[w2];
+        gui_fill_rect(sx, sy, sw_size, sw_size, swcol);
+        // draw "G" label on gradient swatch
+        if (w2 == WALLPAPER_GRADIENT) {
+            gui_puts(sx+10, sy+10, "G", COL_WHITE, swcol);
+        }
+        // selection ring
+        uint32_t ring = (g_wallpaper == w2) ? COL_WIN_TITLE_ACT : COL_BORDER_DARK;
+        gui_draw_rect_border(sx-1, sy-1, sw_size+2, sw_size+2, ring, ring);
+        // tooltip name
+        gui_puts(sx+2, sy+sw_size-FONT_H-2, g_wallpaper_names[w2], COL_WHITE, swcol);
+        // click to select
+        if (click && pt_in(mx, my, sx, sy, sw_size, sw_size)) {
+            g_wallpaper = w2;
+            settings_save();
+        }
+    }
+    ty += 2 * (sw_size + 4) + 4;
+
+    // Save button
+    gui_draw_hline(cx+4, ty, cw-8, COL_BORDER_DARK);
+    ty += 6;
+    if (gui_button(cx+6, ty, 90, 18, "Save Settings", mx, my, click)) {
+        settings_save();
+    }
+    gui_puts(cx+102, ty+5, "Persists on reboot", RGB(100,100,100), COL_WIN_BG);
     (void)ch;
 }
 
@@ -2785,8 +2990,9 @@ void gui_run(void) {
         return;
     }
 
-    // Apply default theme before first frame
+    // Apply default theme before first frame, then load persisted settings
     apply_theme(THEME_MODERN);
+    settings_load();
 
     uint8_t prev_btn = 0;
     uint8_t dragging = 0;
@@ -2810,13 +3016,16 @@ void gui_pump(void) {
     static int32_t drag_idx  = -1;
     static int32_t drag_ox   = 0;
     static int32_t drag_oy   = 0;
+    static uint8_t prev_rbtn = 0;
     // gui_pump runs in TASK_GUI only — no re-entrancy issues with the scheduler.
 
         int32_t mx = g_mouse.x;
         int32_t my = g_mouse.y;
         uint8_t btn  = g_mouse.buttons & 0x01;
+        uint8_t rbtn = (g_mouse.buttons >> 1) & 0x01;
         uint8_t click   = (btn && !prev_btn);
         uint8_t release = (!btn && prev_btn);
+        uint8_t rclick  = (rbtn && !prev_rbtn);
 
         // ---- Drag update ----
         if (dragging && btn && drag_idx >= 0 && drag_idx < g_nwins) {
@@ -2886,24 +3095,47 @@ void gui_pump(void) {
             after_click:;
         }
 
+        // ---- Right-click: open context menu on desktop ----
+        if (rclick) {
+            // Only open on desktop (not on a window or taskbar)
+            int32_t desk_top2 = DESKTOP_TOP_FOR(g_theme);
+            int32_t taskbar_y2 = TASKBAR_Y_FOR(g_theme);
+            uint8_t on_win = 0;
+            for (int32_t i = g_nwins-1; i >= 0; i--) {
+                if ((g_wins[i].flags & WIN_FLAG_VISIBLE) && hit_win(&g_wins[i],mx,my)) {
+                    on_win = 1; break;
+                }
+            }
+            uint8_t on_taskbar = pt_in(mx,my,0,taskbar_y2,SCREEN_W,TASKBAR_H);
+            if (!on_win && !on_taskbar && my >= desk_top2) {
+                g_ctx_open = CTX_DESKTOP;
+                g_ctx_x = mx;
+                g_ctx_y = my;
+            }
+        }
+
+        // ---- Handle left-click on open context menu ----
+        if (click && g_ctx_open) {
+            int item = handle_context_menu_click(mx, my);
+            if (item == CTX_ITEM_WALLPAPER) {
+                g_wallpaper = (g_wallpaper + 1) % WALLPAPER_COUNT;
+                settings_save();
+            } else if (item == CTX_ITEM_THEME) {
+                apply_theme((g_theme + 1) % THEME_COUNT);
+                settings_save();
+            }
+            goto after_rclick;
+        }
+        after_rclick:;
+
         // ============================================================
         // RENDER  – draw to back buffer, then blit once (no flicker)
         // ============================================================
 
-        // 1. Desktop background — theme-aware
+        // 1. Desktop background — theme + wallpaper aware
         int32_t desk_top = DESKTOP_TOP_FOR(g_theme);
         int32_t desk_h   = SCREEN_H - TASKBAR_H;
-        if (g_theme == THEME_CLASSIC) {
-            gui_fill_rect(0, desk_top, SCREEN_W, desk_h, COL_DESKTOP);
-        } else {
-            for(int32_t row=0; row<desk_h; row++){
-                uint32_t t=(uint32_t)row*255/desk_h;
-                uint32_t r2=20+t*10/255; if(r2>50)r2=50;
-                uint32_t g2=60+t*30/255; if(g2>100)g2=100;
-                uint32_t b2=120+t*40/255; if(b2>180)b2=180;
-                gui_draw_hline(0, desk_top+row, SCREEN_W, RGB(r2,g2,b2));
-            }
-        }
+        draw_desktop_bg(desk_top, desk_h);
 
         // 2. Desktop icons
         for (int32_t i=0;i<N_ICONS;i++) draw_icon(&g_icons[i]);
@@ -2924,6 +3156,9 @@ void gui_pump(void) {
         // 5. Start menu (on top of taskbar)
         if (g_startmenu) draw_startmenu(mx, my);
 
+        // 5b. Right-click context menu
+        if (g_ctx_open) draw_context_menu(mx, my);
+
         // 6. Cursor LAST – always on top of everything
         draw_cursor(mx, my);
 
@@ -2931,7 +3166,8 @@ void gui_pump(void) {
         sync_mouse();
     bb_present();
 
-        prev_btn = btn;
+        prev_btn  = btn;
+        prev_rbtn = rbtn;
 
         // ~30fps (32ms). Faster hurts older hardware, slower feels laggy.
         sleep_ms(32);
