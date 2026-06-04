@@ -1,4 +1,5 @@
 #include "syscall.h"
+#include "../gui/gui_sdk.h"
 
 #include "../arch/x86/idt.h"
 #include "../arch/x86/pit.h"
@@ -7,8 +8,6 @@
 #include "../fs/fat32/fat32.h"
 #include "../initramfs/initramfs.h"
 #include "../sched/sched.h"
-
-typedef int32_t (*syscall_fn_t)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
 
 #define SYSCALL_TABLE_SIZE 64
 #define READDIR_SCRATCH_MAX 64
@@ -43,6 +42,11 @@ static void *translate_app_ptr(uint32_t raw_ptr, uint32_t len) {
         return (void *)(g_app_image_base + raw_ptr);
     }
     return (void *)raw_ptr;
+}
+
+/* Public wrapper used by gui_sdk.c to translate app pointers. */
+void *syscall_translate_app_ptr(uint32_t raw_ptr, uint32_t len) {
+    return translate_app_ptr(raw_ptr, len);
 }
 
 static int32_t sys_write_impl(uint32_t fd, uint32_t buf_ptr, uint32_t len, uint32_t a3, uint32_t a4) {
@@ -326,6 +330,11 @@ static int32_t sys_chdir_impl(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3
 
 static syscall_fn_t syscall_table[SYSCALL_TABLE_SIZE];
 
+void syscall_register(int num, syscall_fn_t fn) {
+    if (num > 0 && num < SYSCALL_TABLE_SIZE)
+        syscall_table[num] = fn;
+}
+
 void syscall_dispatch_handler(void *regs_ptr) {
     isr_regs_t *regs = (isr_regs_t *)regs_ptr;
     uint32_t num = regs->eax;
@@ -357,6 +366,7 @@ void syscall_init(void) {
     syscall_table[SYS_isatty] = sys_isatty_impl;
     syscall_table[SYS_getcwd] = sys_getcwd_impl;
     syscall_table[SYS_chdir] = sys_chdir_impl;
+    gui_sdk_register_syscalls();
     idt_register_handler(0x80, syscall_dispatch_handler);
 }
 

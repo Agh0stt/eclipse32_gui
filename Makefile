@@ -5,7 +5,7 @@
 
 # --- Toolchain ---
 NASM       := nasm
-CC         := zig cc -target x86-freestanding
+CC         := clang --target=i686-pc-none-elf
 LD         := ld.lld
 OBJCOPY    := llvm-objcopy
 
@@ -51,6 +51,12 @@ WRITER_OBJ    := $(BUILD)/apps/writer.o
 WRITER_ELF    := $(BUILD)/apps/writer.elf
 WRITER_BIN    := $(BUILD)/apps/writer.bin
 WRITER_E32    := $(BUILD)/apps/WRITER.E32
+
+GUITEST_SRC   := $(APPS_DIR)/guitest/guitest.c
+GUITEST_OBJ   := $(BUILD)/apps/guitest.o
+GUITEST_ELF   := $(BUILD)/apps/guitest.elf
+GUITEST_BIN   := $(BUILD)/apps/guitest.bin
+GUITEST_E32   := $(BUILD)/apps/GUITEST.E32
 WRITER_INS    := $(BUILD)/WRITER.INS
 LIBC_STRING_OBJ := $(BUILD)/apps/sdk/libc/string.o
 LIBC_UNISTD_OBJ := $(BUILD)/apps/sdk/libc/unistd.o
@@ -82,6 +88,7 @@ KERNEL_SRCS := \
     $(SHELL_DIR)/ins_pkg.c \
     $(KERNEL_DIR)/drivers/mouse/mouse.c \
     $(KERNEL_DIR)/gui/gui_desktop.c \
+    $(KERNEL_DIR)/gui/gui_sdk.c \
     $(KERNEL_DIR)/sched/sched.c \
     $(KERNEL_DIR)/libk/kmath.c
 
@@ -221,6 +228,19 @@ $(WRITER_BIN): $(WRITER_ELF) | $(BUILD)
 $(WRITER_E32): $(WRITER_BIN) tools/pack_e32.py | $(BUILD)
 	python3 tools/pack_e32.py $(WRITER_BIN) $(WRITER_E32)
 
+$(GUITEST_OBJ): $(GUITEST_SRC) $(APPS_DIR)/sdk/e32_gui.h $(APPS_DIR)/sdk/e32_syscall.h | $(BUILD)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -I$(APPS_DIR)/sdk -I$(APPS_DIR)/sdk/libc -c $< -o $@
+
+$(GUITEST_ELF): $(CRT0_OBJ) $(GUITEST_OBJ) $(LIBC_OBJS) $(APPS_DIR)/sdk/app.ld | $(BUILD)
+	$(LD) -m elf_i386 -nostdlib -T $(APPS_DIR)/sdk/app.ld -o $@ $(CRT0_OBJ) $(GUITEST_OBJ) $(LIBC_OBJS)
+
+$(GUITEST_BIN): $(GUITEST_ELF) | $(BUILD)
+	$(OBJCOPY) -O binary $(GUITEST_ELF) $@
+
+$(GUITEST_E32): $(GUITEST_BIN) tools/pack_e32.py | $(BUILD)
+	python3 tools/pack_e32.py $(GUITEST_BIN) $@
+
 $(WRITER_INS): $(WRITER_E32) tools/writer_pkg/install.cfg tools/pack_ins.py | $(BUILD)
 	@mkdir -p $(BUILD)/writer_pkg_staging
 	cp tools/writer_pkg/install.cfg $(BUILD)/writer_pkg_staging/install.cfg
@@ -230,7 +250,7 @@ $(WRITER_INS): $(WRITER_E32) tools/writer_pkg/install.cfg tools/pack_ins.py | $(
 # =============================================================================
 # Disk image assembly
 # =============================================================================
-$(DISK_IMG): $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(HELLO_APP_E32) $(HELLOC_E32) $(NUMECHO_E32) $(WRITER_E32) $(WRITER_INS) | $(BUILD)
+$(DISK_IMG): $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(HELLO_APP_E32) $(HELLOC_E32) $(NUMECHO_E32) $(WRITER_E32) $(WRITER_INS) $(GUITEST_E32) | $(BUILD)
 	@echo "[IMG ] Creating disk image"
 	dd if=/dev/zero      of=$@ bs=512 count=65536 status=none
 	dd if=$(STAGE1_BIN)  of=$@ bs=512 seek=0  conv=notrunc status=none
@@ -242,6 +262,7 @@ $(DISK_IMG): $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $(HELLO_APP_E32) $(HELLOC
 	python3 tools/inject_fat32_file.py $@ $(HELLOC_E32) HELLOC.E32
 	python3 tools/inject_fat32_file.py $@ $(NUMECHO_E32) NUMECHO.E32
 	python3 tools/inject_fat32_file.py $@ $(WRITER_E32) WRITER.E32
+	python3 tools/inject_fat32_file.py $@ $(GUITEST_E32) GUITEST.E32
 	python3 tools/inject_ins.py $@ $(WRITER_INS) WRITER.INS
 	@echo "[IMG ] Done: $@"
 

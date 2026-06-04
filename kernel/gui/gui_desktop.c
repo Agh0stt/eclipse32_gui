@@ -4,6 +4,7 @@
 
 #include "../kernel.h"
 #include "gui_desktop.h"
+#include "gui_sdk.h"
 #include "../drivers/keyboard/keyboard.h"
 #include "../drivers/mouse/mouse.h"
 #include "../arch/x86/pit.h"
@@ -594,6 +595,27 @@ int gui_button(int32_t x, int32_t y, int32_t w, int32_t h,
 static Window      g_wins[MAX_WINDOWS];
 static int32_t     g_nwins  = 0;
 static int32_t     g_front  = -1;   // index of active window
+static uint32_t    g_next_win_id = 1; // monotonic; 0 = uninitialised
+
+/* Look up g_wins[] index by stable window id. Returns -1 if not found. */
+static int32_t win_idx_by_id(uint32_t id) {
+    for (int32_t i = 0; i < g_nwins; i++)
+        if (g_wins[i].id == id) return i;
+    return -1;
+}
+
+// Set to 1 while a SDK app is running in TASK_APP via the terminal.
+// gui_pump_sdk() uses this to yield to the app between chrome and bb_present.
+static uint8_t     g_sdk_app_active = 0;
+uint8_t gui_sdk_is_active(void) { return g_sdk_app_active; }
+// Set to 1 while the user is dragging a window title bar.
+static uint8_t     g_dragging = 0;
+// Snapshot of each SDK window's content-area origin taken BEFORE the
+// drag-position update each frame.  After sched_yield() the app will
+// have drawn at these (old) coords; we blit those pixels to the new
+// position so the window content follows the chrome with no white flash.
+static int32_t     g_sdk_prev_cx[GUI_SDK_MAX_WINS];
+static int32_t     g_sdk_prev_cy[GUI_SDK_MAX_WINS];
 
 // Start menu
 static uint8_t     g_startmenu = 0; // 1 = open
@@ -800,13 +822,61 @@ static int32_t open_window(AppType app) {
     if (w->x < 0) w->x = 0;
     if (w->y < desk_top) w->y = desk_top;
 
+    uint32_t new_id = w->id;     /* capture before bring_front can shuffle */
     g_nwins++;
     bring_front(g_nwins - 1);
-    return g_front;
+    return (int32_t)new_id;
 }
 
 static void close_window(int32_t idx) {
     if (idx < 0 || idx >= g_nwins) return;
+    Window *cw = &g_wins[idx];
+
+    // Erase the window's pixels (chrome + content + shadow) from g_bb so
+    // nothing lingers on screen after the window is gone.  We repaint the
+    // desktop background rows that were covered, then let the next frame
+    // redraw any other windows on top.
+    {
+        int32_t _ex = cw->x,  _ey = cw->y;
+        int32_t _ew = cw->w + 4, _eh = cw->h + 4; // +4 for shadow
+        int32_t _dt = DESKTOP_TOP_FOR(g_theme);
+        int32_t _dh = SCREEN_H - _dt - ((g_theme==THEME_CLASSIC)?TASKBAR_H:0);
+        for (int32_t _r = _ey; _r < _ey + _eh; _r++) {
+            if (_r < 0 || _r >= BB_H) continue;
+            uint32_t _bg;
+            if (g_wallpaper != WALLPAPER_GRADIENT) {
+                _bg = g_wallpaper_colors[g_wallpaper];
+            } else {
+                int32_t _rel = _r - _dt;
+                if (_rel < 0) _rel = 0;
+                if (_rel >= _dh) _rel = _dh > 0 ? _dh - 1 : 0;
+                uint32_t _t = (uint32_t)_rel * 255 / (_dh > 0 ? (uint32_t)_dh : 1);
+                uint32_t _r2, _g2, _b2;
+                if (g_theme == THEME_MIDNIGHT) {
+                    _r2=4+_t*8/255; _g2=8+_t*18/255; _b2=30+_t*50/255;
+                } else if (g_theme == THEME_SUNSET) {
+                    _r2=40+_t*120/255; _g2=5+_t*40/255;
+                    _b2=(50>_t*40/255)?(50-_t*40/255):5;
+                } else {
+                    _r2=20+_t*10/255; if(_r2>50)_r2=50;
+                    _g2=60+_t*30/255; if(_g2>100)_g2=100;
+                    _b2=120+_t*40/255; if(_b2>180)_b2=180;
+                }
+                _bg = RGB(_r2, _g2, _b2);
+            }
+            int32_t _x0 = _ex < 0 ? 0 : _ex;
+            int32_t _x1 = _ex + _ew > BB_W ? BB_W : _ex + _ew;
+            for (int32_t _c = _x0; _c < _x1; _c++)
+                g_bb[_r * BB_W + _c] = _bg;
+        }
+    }
+
+    // If this was an SDK window, clear the active flag so gui_pump stops
+    // yielding to the (now-exited) app task.
+    if (cw->app == APP_SDK) {
+        g_sdk_app_active = 0;
+    }
+
     for (int32_t i = idx; i < g_nwins-1; i++) g_wins[i] = g_wins[i+1];
     g_nwins--;
     g_front = (g_nwins > 0) ? g_nwins-1 : -1;
@@ -2341,7 +2411,8 @@ static void render_piano(Window *w, int32_t mx, int32_t my, uint8_t click){
 
 // --- Terminal ---
 // Command buffer: copied before launching app task (avoids stack lifetime issues)
-static char g_term_cmd_buf[256];
+static char     g_term_cmd_buf[256];
+static Window  *g_term_win = NULL; /* window running the current SDK app */
 
 // Forward declaration (defined below)
 static void term_out_cb(const char *c, void *ud);
@@ -2414,6 +2485,23 @@ static int32_t term_get_cmd(Window *w, char *out, int32_t max){
 
 static void render_terminal(Window *w, int32_t mx, int32_t my, uint8_t click, uint8_t active){
     (void)mx;(void)my;(void)click;
+
+    // Deferred teardown: the app launch in render_terminal no longer spins a
+    // blocking gui_pump() loop.  Instead we detect here, each frame, whether
+    // the previously-launched app has finished and clean up if so.
+    if (w->st.term_app_running && !sched_app_running()) {
+        g_sdk_app_active = 0;
+        syscall_set_output_cb(NULL, NULL);
+        syscall_set_input_cb(NULL, NULL);
+        w->st.term_app_running = 0;
+        // Append the prompt for the next command
+        if (w->st.text_len < WIN_TEXT_BUF - 4) {
+            w->st.text[w->st.text_len++] = '>';
+            w->st.text[w->st.text_len++] = ' ';
+            w->st.text[w->st.text_len]   = 0;
+        }
+    }
+
     int32_t cx=win_ca_x(w),cy=win_ca_y(w),cw=win_ca_w(w),ch=win_ca_h(w);
     gui_fill_rect(cx,cy,cw,ch,COL_TERM_BG);
 
@@ -2481,28 +2569,39 @@ static void render_terminal(Window *w, int32_t mx, int32_t my, uint8_t click, ui
                 syscall_set_input_cb(term_in_cb, (void*)w);
                 kstrcpy(g_term_cmd_buf, cmd);
 
-                // Launch app in TASK_APP.  sched_run_app does the first switch.
-                // The app may yield back here many times while waiting for
-                // keyboard input (sys_read → sched_yield).  Each time it
-                // yields we pump one GUI frame so the desktop stays alive and
-                // keypresses get pushed into the ring buffer.  We loop until
-                // the app calls sched_app_done() (runnable → false).
+                // Launch app in TASK_APP.  Set g_sdk_app_active BEFORE the
+                // first sched_run_app so gui_pump's yield-to-app guard fires
+                // correctly on every frame, including the very first.
+                // We do NOT loop here — render_terminal runs inside gui_pump's
+                // render pass, so calling gui_pump() recursively would corrupt
+                // the stack.  Instead we return immediately; the top-level
+                // gui_pump loop re-enters each frame, hits the g_sdk_app_active
+                // branch, yields to the app, and the app draws its content.
+                // Teardown is handled at the top of render_terminal on the
+                // first frame after sched_app_running() becomes false.
+                g_sdk_app_active = 1;
+                g_term_win = w;
                 sched_run_app(term_app_runner, (void*)w);
-                while (sched_app_running()) {
-                    gui_pump();          // render frame + collect keypresses
-                    sched_yield();       // give app another turn
+                // sched_run_app does the first yield; if the app finished
+                // synchronously (no sys_read), sched_app_running() is already
+                // false here and we fall through to teardown below.
+                if (!sched_app_running()) {
+                    // App finished synchronously (no sys_read calls).
+                    g_sdk_app_active = 0;
+                    g_term_win = NULL;
+                    syscall_set_output_cb(NULL, NULL);
+                    syscall_set_input_cb(NULL, NULL);
+                    w->st.term_app_running = 0;
+                    if (w->st.text_len < WIN_TEXT_BUF - 4) {
+                        w->st.text[w->st.text_len++] = '>';
+                        w->st.text[w->st.text_len++] = ' ';
+                        w->st.text[w->st.text_len]   = 0;
+                    }
                 }
-
-                // App finished — tear down callbacks
-                syscall_set_output_cb(NULL, NULL);
-                syscall_set_input_cb(NULL, NULL);
-                w->st.term_app_running = 0;
+                // If still running: deferred teardown fires in render_terminal
+                // on the frame after the app calls sched_app_done().
             }
-            if(w->st.text_len<WIN_TEXT_BUF-4){
-                w->st.text[w->st.text_len++]='>';
-                w->st.text[w->st.text_len++]=' ';
-                w->st.text[w->st.text_len]=0;
-            }
+            /* prompt appended by deferred teardown above */
         }else if(kc=='\b'||kc==127){
             if(w->st.text_len>=3){
                 char prev=w->st.text[w->st.text_len-1];
@@ -2865,6 +2964,11 @@ static void render_app(Window *w, int32_t mx, int32_t my, uint8_t click, uint8_t
     case APP_LOGVIEWER:   render_logviewer(w,mx,my,click);  break;
     case APP_ABOUT:       render_about(w,mx,my,click);      break;
     case APP_SETTINGS:    render_settings(w,mx,my,click);   break;
+    case APP_SDK:
+        // SDK-managed window: the app draws its own content via syscalls
+        // after gui_pump() yields to it (step 3b in gui_pump).
+        // Don't clear or overwrite anything here.
+        break;
     default: {
         int32_t cx=win_ca_x(w),cy=win_ca_y(w),cw=win_ca_w(w),ch=win_ca_h(w);
         gui_fill_rect(cx,cy,cw,ch,COL_WIN_BG);
@@ -3061,10 +3165,6 @@ void gui_run(void) {
     apply_theme(THEME_MODERN);
     settings_load();
 
-    uint8_t prev_btn = 0;
-    uint8_t dragging = 0;
-    int32_t drag_idx = -1, drag_ox = 0, drag_oy = 0;
-
     // Open terminal on startup
     open_window(APP_TERMINAL);
 
@@ -3079,12 +3179,17 @@ void gui_run(void) {
 // ============================================================
 void gui_pump(void) {
     static uint8_t prev_btn  = 0;
-    static uint8_t dragging  = 0;
+    /* g_dragging: now file-scope, see declaration above gui_pump */
     static int32_t drag_idx  = -1;
     static int32_t drag_ox   = 0;
     static int32_t drag_oy   = 0;
     static uint8_t prev_rbtn = 0;
     // gui_pump runs in TASK_GUI only — no re-entrancy issues with the scheduler.
+
+        // Sync mouse FIRST so mx/my reflect the current frame's position,
+        // not last frame's.  This eliminates the 32ms click-position lag that
+        // caused close/title hits to register at a stale cursor location.
+        sync_mouse();
 
         int32_t mx = g_mouse.x;
         int32_t my = g_mouse.y;
@@ -3095,7 +3200,21 @@ void gui_pump(void) {
         uint8_t rclick  = (rbtn && !prev_rbtn);
 
         // ---- Drag update ----
-        if (dragging && btn && drag_idx >= 0 && drag_idx < g_nwins) {
+        // Snapshot SDK window content-area origins BEFORE moving them.
+        // After sched_yield() the app will have drawn at these coords;
+        // we blit those pixels to the new position after the yield.
+        if (g_dragging) {
+            int32_t _snap_i = 0;
+            for (int32_t _k = 0; _k < g_nwins && _snap_i < GUI_SDK_MAX_WINS; _k++) {
+                Window *_wk = &g_wins[_k];
+                if (!(_wk->flags & WIN_FLAG_VISIBLE)) continue;
+                if (_wk->app != APP_SDK) continue;
+                g_sdk_prev_cx[_snap_i] = win_ca_x(_wk);
+                g_sdk_prev_cy[_snap_i] = win_ca_y(_wk);
+                _snap_i++;
+            }
+        }
+        if (g_dragging && btn && drag_idx >= 0 && drag_idx < g_nwins) {
             Window *dw = &g_wins[drag_idx];
             dw->x = mx - drag_ox;
             dw->y = my - drag_oy;
@@ -3104,7 +3223,7 @@ void gui_pump(void) {
             if(dw->x+dw->w>SCREEN_W)   dw->x=SCREEN_W-dw->w;
             if(dw->y+dw->h>SCREEN_H) dw->y=SCREEN_H-dw->h;
         }
-        if (release) { dragging=0; drag_idx=-1; }
+        if (release) { g_dragging=0; drag_idx=-1; }
 
         // ---- Click handling ----
         if (click) {
@@ -3135,9 +3254,18 @@ void gui_pump(void) {
                 bring_front(i);
                 Window *fw = &g_wins[g_front];
 
-                if (hit_close(fw,mx,my)) { close_window(g_front); goto after_click; }
+                if (hit_close(fw,mx,my)) {
+                    // For SDK windows, signal the app to exit cleanly (same
+                    // as its own Close button) instead of forcibly destroying
+                    // the window — that would leave TASK_APP frozen forever.
+                    if (fw->app == APP_SDK)
+                        gui_sdk_request_close((int32_t)fw->id);
+                    else
+                        close_window(g_front);
+                    goto after_click;
+                }
                 if (hit_title(fw,mx,my)) {
-                    dragging=1; drag_idx=g_front;
+                    g_dragging=1; drag_idx=g_front;
                     drag_ox=mx-fw->x; drag_oy=my-fw->y;
                     goto after_click;
                 }
@@ -3217,6 +3345,109 @@ void gui_pump(void) {
             render_app(w, mx, my, click && active, active);
         }
 
+        // 3b. If a SDK app is running in TASK_APP, yield to it here so it can
+        //     draw its content into g_bb on top of the chrome we just drew.
+        //     It will sched_yield() back to us when done (via SYS_GUI_PUMP).
+        //     We ALWAYS yield, even while dragging — skipping the yield would
+        //     leave TASK_APP with no valid TASK_GUI context to return to when
+        //     the app calls its own gui_pump()→sched_yield(), causing a crash.
+        //     Instead we let the app draw freely, then blit its pixels from the
+        //     old coords to the new coords within g_bb, so content tracks the
+        //     chrome exactly with no white flash.
+        if (g_sdk_app_active) {
+            // Update prev_btn BEFORE yielding so the next frame computes
+            // click/release correctly even when we exit mid-frame here.
+            prev_btn  = btn;
+            prev_rbtn = rbtn;
+            sched_yield();
+            // If we were dragging, the app drew at its pre-drag coords (old).
+            // Blit those pixels from old position → new position within g_bb
+            // so the content follows the chrome exactly, with no white flash.
+            if (g_dragging) {
+                int32_t _si = 0;
+                for (int32_t _k = 0; _k < g_nwins && _si < GUI_SDK_MAX_WINS; _k++) {
+                    Window *_sw = &g_wins[_k];
+                    if (!(_sw->flags & WIN_FLAG_VISIBLE)) { continue; }
+                    if (_sw->app != APP_SDK) continue;
+                    int32_t _new_cx = win_ca_x(_sw), _new_cy = win_ca_y(_sw);
+                    int32_t _old_cx = g_sdk_prev_cx[_si], _old_cy = g_sdk_prev_cy[_si];
+                    int32_t _cw     = win_ca_w(_sw),       _ch    = win_ca_h(_sw);
+                    _si++;
+                    if (_new_cx == _old_cx && _new_cy == _old_cy) continue; // no move
+                    // Blit scanline by scanline: old row → new row inside g_bb.
+                    // Work bottom-up when moving down to avoid overlap corruption.
+                    int32_t _dy = _new_cy - _old_cy;
+                    int32_t _dx = _new_cx - _old_cx;
+                    if (_dy >= 0) {
+                        for (int32_t _row = _ch-1; _row >= 0; _row--) {
+                            int32_t _src_y = _old_cy + _row;
+                            int32_t _dst_y = _new_cy + _row;
+                            if (_src_y < 0 || _src_y >= BB_H) continue;
+                            if (_dst_y < 0 || _dst_y >= BB_H) continue;
+                            uint32_t *_src = &g_bb[_src_y * BB_W + _old_cx];
+                            uint32_t *_dst = &g_bb[_dst_y * BB_W + _new_cx];
+                            int32_t _cols = _cw;
+                            if (_old_cx < 0) { _src -= _old_cx; _dst -= _old_cx; _cols += _old_cx; }
+                            if (_new_cx + _cols > BB_W) _cols = BB_W - _new_cx;
+                            if (_new_cx < 0 || _old_cx < 0) continue;
+                            if (_cols <= 0) continue;
+                            kmemcpy(_dst, _src, (uint32_t)_cols * 4);
+                        }
+                    } else {
+                        for (int32_t _row = 0; _row < _ch; _row++) {
+                            int32_t _src_y = _old_cy + _row;
+                            int32_t _dst_y = _new_cy + _row;
+                            if (_src_y < 0 || _src_y >= BB_H) continue;
+                            if (_dst_y < 0 || _dst_y >= BB_H) continue;
+                            uint32_t *_src = &g_bb[_src_y * BB_W + _old_cx];
+                            uint32_t *_dst = &g_bb[_dst_y * BB_W + _new_cx];
+                            int32_t _cols = _cw;
+                            if (_new_cx + _cols > BB_W) _cols = BB_W - _new_cx;
+                            if (_new_cx < 0 || _old_cx < 0) continue;
+                            if (_cols <= 0) continue;
+                            kmemcpy(_dst, _src, (uint32_t)_cols * 4);
+                        }
+                    }
+                    (void)_dx; // used implicitly via _old_cx offset above
+                    // Erase the ghost at the old position by re-painting those
+                    // desktop background rows directly into g_bb.
+                    {
+                        int32_t _dt = DESKTOP_TOP_FOR(g_theme);
+                        int32_t _dh = SCREEN_H - _dt - ((g_theme==THEME_CLASSIC)?TASKBAR_H:0);
+                        for (int32_t _gr = _old_cy; _gr < _old_cy + _ch; _gr++) {
+                            if (_gr < 0 || _gr >= BB_H) continue;
+                            uint32_t _bg;
+                            if (g_wallpaper != WALLPAPER_GRADIENT) {
+                                _bg = g_wallpaper_colors[g_wallpaper];
+                            } else {
+                                int32_t _rel = _gr - _dt;
+                                if (_rel < 0) _rel = 0;
+                                if (_rel >= _dh) _rel = _dh - 1;
+                                uint32_t _t = (uint32_t)_rel * 255 / (_dh > 0 ? (uint32_t)_dh : 1);
+                                uint32_t _r2, _g2, _b2;
+                                if (g_theme == THEME_MIDNIGHT) {
+                                    _r2=4+_t*8/255; _g2=8+_t*18/255; _b2=30+_t*50/255;
+                                } else if (g_theme == THEME_SUNSET) {
+                                    _r2=40+_t*120/255; _g2=5+_t*40/255;
+                                    _b2=(int32_t)(50-_t*40/255)<5?5:(50-_t*40/255);
+                                } else {
+                                    _r2=20+_t*10/255; if(_r2>50)_r2=50;
+                                    _g2=60+_t*30/255; if(_g2>100)_g2=100;
+                                    _b2=120+_t*40/255; if(_b2>180)_b2=180;
+                                }
+                                _bg = RGB(_r2, _g2, _b2);
+                            }
+                            int32_t _x0 = _old_cx, _x1 = _old_cx + _cw;
+                            if (_x0 < 0) _x0 = 0;
+                            if (_x1 > BB_W) _x1 = BB_W;
+                            for (int32_t _gx = _x0; _gx < _x1; _gx++)
+                                g_bb[_gr * BB_W + _gx] = _bg;
+                        }
+                    }
+                }
+            }
+        }
+
         // 4. Taskbar (drawn after windows so it's always on top)
         draw_taskbar(mx, my, click);
 
@@ -3230,7 +3461,6 @@ void gui_pump(void) {
         draw_cursor(mx, my);
 
         // 7. Blit back buffer → real framebuffer  (single write, zero flicker)
-        sync_mouse();
     bb_present();
 
         prev_btn  = btn;
@@ -3238,4 +3468,78 @@ void gui_pump(void) {
 
         // ~30fps (32ms). Faster hurts older hardware, slower feels laggy.
         sleep_ms(32);
+}
+
+// =============================================================================
+// GUI SDK accessors — append these to the bottom of gui_desktop.c
+// =============================================================================
+
+// Open a new SDK window with an arbitrary title and size.
+// Returns the index in g_wins[] or -1 on failure.
+int32_t gui_desktop_sdk_open(const char *title, int32_t x, int32_t y,
+                              uint32_t w, uint32_t h) {
+    if (g_nwins >= MAX_WINDOWS) return -1;
+
+    Window *win = &g_wins[g_nwins];
+    kmemset(win, 0, sizeof(Window));
+    win->flags = WIN_FLAG_VISIBLE | WIN_FLAG_MOVEABLE | WIN_FLAG_CLOSEABLE;
+    win->app   = APP_SDK;
+    win->id    = g_next_win_id++;
+
+    // Copy title (max 39 chars)
+    int ti = 0;
+    while (title && title[ti] && ti < 39) { win->title[ti] = title[ti]; ti++; }
+    win->title[ti] = 0;
+
+    // Size
+    win->w = (int32_t)(w ? w : 320);
+    win->h = (int32_t)(h ? h : 240);
+
+    // Position: use requested coords or auto-cascade
+    int32_t desk_top = DESKTOP_TOP_FOR(g_theme);
+    if (x < 0) {
+        int32_t off = g_nwins * 22;
+        win->x = 60 + (off % 300);
+        win->y = desk_top + 10 + (off % 180);
+    } else {
+        win->x = x;
+        win->y = (y < desk_top) ? desk_top : y;
+    }
+    // Clamp to screen
+    if (win->x + win->w > SCREEN_W - 4) win->x = SCREEN_W - win->w - 4;
+    if (win->y + win->h > SCREEN_H - 4) win->y = desk_top + 4;
+    if (win->x < 0) win->x = 0;
+
+    uint32_t new_id = win->id;   /* capture before bring_front can shuffle */
+    g_nwins++;
+    bring_front(g_nwins - 1);
+    return (int32_t)new_id;
+}
+
+// Close (remove) the SDK window at index win_idx.
+void gui_desktop_sdk_close(int32_t win_id) {
+    int32_t idx = win_idx_by_id((uint32_t)win_id);
+    if (idx >= 0) close_window(idx);
+}
+
+// Update the title of the window at win_idx.
+void gui_desktop_sdk_set_title(int32_t win_id, const char *title) {
+    int32_t win_idx = win_idx_by_id((uint32_t)win_id);
+    if (win_idx < 0) return;
+    int ti = 0;
+    while (title && title[ti] && ti < 39) { g_wins[win_idx].title[ti] = title[ti]; ti++; }
+    g_wins[win_idx].title[ti] = 0;
+}
+
+// Return the client area (inside chrome) of the window at win_idx.
+void gui_desktop_sdk_getrect(int32_t win_id,
+                              int32_t *ox, int32_t *oy,
+                              int32_t *ow, int32_t *oh) {
+    int32_t win_idx = win_idx_by_id((uint32_t)win_id);
+    if (win_idx < 0) { *ox = *oy = 0; *ow = *oh = 0; return; }
+    Window *w = &g_wins[win_idx];
+    *ox = win_ca_x(w);
+    *oy = win_ca_y(w);
+    *ow = win_ca_w(w);
+    *oh = win_ca_h(w);
 }

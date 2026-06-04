@@ -4,6 +4,7 @@
 // =============================================================================
 #include "heap.h"
 #include "pmm.h"
+#include "vmm.h"
 #include "../kernel.h"
 
 // Block header: stored before each allocated/free chunk
@@ -50,20 +51,27 @@ static block_hdr_t *prev_block(block_hdr_t *hdr) {
 }
 
 void heap_init(uint32_t virt_start, uint32_t initial_size) {
-    // Map physical pages for initial heap
+    // Allocate contiguous physical pages for the heap
     uint32_t pages = PAGE_ALIGN_UP(initial_size) / PAGE_SIZE;
     uint32_t phys = pmm_alloc_pages(pages);
     if (!phys) {
-        // Fallback: use static area just above kernel
+        // Fallback: identity-map a static area just above kernel
         virt_start = 0x400000;
+        phys       = virt_start;
     }
 
     heap_start = (uint8_t *)virt_start;
     heap_end   = heap_start;
     heap_max   = heap_start + initial_size;
 
-    // Identity map the heap area (simplified - assume already mapped for now)
-    // Full VMM will handle this properly
+    // Map each physical page into the virtual address range.
+    // Without this, writing the heap header to virt_start (e.g. 0xC0000000)
+    // triggers a page fault immediately after VBE init and the OS resets.
+    for (uint32_t i = 0; i < pages; i++) {
+        vmm_map(virt_start + i * PAGE_SIZE,
+                phys       + i * PAGE_SIZE,
+                0x03);  // present | writable
+    }
 
     // Create one big free block covering the whole initial size
     block_hdr_t *initial = (block_hdr_t *)heap_start;

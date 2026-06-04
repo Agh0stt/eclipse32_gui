@@ -92,6 +92,7 @@ typedef enum {
     APP_TETRIS,
     APP_OS32,       /* launches hello.os32 directly from desktop */
     APP_SETTINGS,   /* theme / settings panel */
+    APP_SDK,        /* SDK-managed window; userspace app draws its own content */
     APP_COUNT
 } AppType;
 
@@ -191,6 +192,7 @@ typedef struct {
     AppType  app;
     char     title[40];
     AppState st;
+    uint32_t id;   /* stable identity — survives bring_front() shuffles */
 } Window;
 
 // ============================================================
@@ -219,3 +221,5 @@ int  gui_button(int32_t x, int32_t y, int32_t w, int32_t h,
                 const char *label, int32_t mx, int32_t my, uint8_t clicked);
 
 #endif
+uint8_t gui_sdk_is_active(void);
+void    gui_sdk_request_close(int32_t win_id);

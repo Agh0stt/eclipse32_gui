@@ -49,13 +49,22 @@ typedef struct {
     uint32_t is_hidden;
 } PACKED sys_dirent_t;
 
+// Function pointer type for all syscall handlers.
+// Args: (ebx, ecx, edx, esi, edi) → return value written back to eax.
+typedef int32_t (*syscall_fn_t)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+
 void syscall_init(void);
 void syscall_dispatch_handler(void *regs);
+
+// Register a single handler into the syscall table.
+// Safe to call after syscall_init(); used by subsystems like gui_sdk.
+void syscall_register(int num, syscall_fn_t fn);
 
 void syscall_app_begin(void);
 bool syscall_app_exit_requested(void);
 int syscall_app_exit_code(void);
 void syscall_set_app_image(const void *base, uint32_t size);
+void *syscall_translate_app_ptr(uint32_t raw_ptr, uint32_t len);
 void syscall_set_app_heap(uint32_t brk_base, uint32_t brk_limit);
 void syscall_set_output_cb(void (*cb)(const char *, void *), void *ud);
 void syscall_set_input_cb(int (*cb)(void *), void *ud);

@@ -21,6 +21,7 @@
 #include "../fs/fat32/fat32.h"
 #include "../initramfs/initramfs.h"
 #include "../gui/gui_desktop.h"
+#include "../gui/gui_sdk.h"
 #include "../sched/sched.h"
 
 // Defined in linker script
@@ -159,6 +160,8 @@ void kmain(boot_info_t *boot_info) {
     if (vbe_active()) {
         vga_puts("[INIT] Initialising scheduler...\n");
         sched_init();
+        vga_puts("[INIT] Initialising GUI App SDK...\n");
+        gui_sdk_init();
         vga_puts("[INIT] Launching EclipseGUI desktop...\n");
         // Use ported old GUI (proven working)
         extern void gui_run(void);
